@@ -1,0 +1,69 @@
+service: job-manager-health-check
+
+build:
+  esbuild: true
+
+custom:
+  resources: ${file(../../../config/config.${self:provider.stage}.yml)}
+  imports:
+    eventsTableName: !ImportValue job-manager-events-table-name-${self:provider.stage}
+    eventsTableArn: !ImportValue job-manager-events-table-arn-${self:provider.stage}
+    eventBusName: !ImportValue job-manager-event-bus-name-${self:provider.stage}
+  schedules:
+    healthCheck:
+      rate:
+        dev: "rate(365 days)"
+        prod: "rate(5 minutes)"
+      enabled:
+        dev: false
+        prod: true
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+  profile: ${self:custom.resources.profile, 'default'}
+  stackTags:
+    Team: job-manager-health-check-${self:provider.stage}
+  environment:
+    ENVIRONMENT: ${self:provider.stage}
+    EVENTS_TABLE: ${self:custom.imports.eventsTableName}
+    EVENT_BUS_NAME: ${self:custom.imports.eventBusName}
+    TENANT_ID: gbInnovations
+    APP_NAME: task-workflow
+    SLACK_BOT_TOKEN: ${self:custom.resources.slackBotToken}
+    ALERT_CHANNEL: ${self:custom.resources.alertChannel}
+
+functions:
+
+  health-check:
+    handler: src/health-check.handler
+    description: Checks health of running tasks — alerts on stuck/overtime via Slack
+    timeout: 60
+    memorySize: 256
+    events:
+      - schedule:
+          rate: ${self:custom.schedules.healthCheck.rate.${self:provider.stage}}
+          enabled: ${self:custom.schedules.healthCheck.enabled.${self:provider.stage}}
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:Query
+        Resource:
+          - ${self:custom.imports.eventsTableArn}
+          - ${self:custom.imports.eventsTableArn}/index/*
+      - Effect: Allow
+        Action: events:PutEvents
+        Resource: "*"
+
+  health-check-single:
+    handler: src/health-check.checkSingle
+    description: Check health of a specific task by requestId (manual invoke)
+    timeout: 30
+    memorySize: 256
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:Query
+        Resource:
+          - ${self:custom.imports.eventsTableArn}
+          - ${self:custom.imports.eventsTableArn}/index/*
