@@ -1,0 +1,155 @@
+service: job-manager-producer
+
+build:
+  esbuild: true
+
+custom:
+  resources: ${file(../../../config/config.${self:provider.stage}.yml)}
+  imports:
+    queueUrl: !ImportValue job-manager-queue-url-${self:provider.stage}
+    queueArn: !ImportValue job-manager-queue-arn-${self:provider.stage}
+    eventsTableName: !ImportValue job-manager-events-table-name-${self:provider.stage}
+    eventsTableArn: !ImportValue job-manager-events-table-arn-${self:provider.stage}
+    taskDefsTableName: !ImportValue job-manager-task-defs-table-name-${self:provider.stage}
+    taskDefsTableArn: !ImportValue job-manager-task-defs-table-arn-${self:provider.stage}
+    eventBusName: !ImportValue job-manager-event-bus-name-${self:provider.stage}
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+  profile: ${self:custom.resources.profile, 'default'}
+  stackTags:
+    Team: job-manager-producer-${self:provider.stage}
+  environment:
+    ENVIRONMENT: ${self:provider.stage}
+    TASK_QUEUE_URL: ${self:custom.imports.queueUrl}
+    EVENTS_TABLE: ${self:custom.imports.eventsTableName}
+    TASK_DEFINITIONS_TABLE: ${self:custom.imports.taskDefsTableName}
+    EVENT_BUS_NAME: ${self:custom.imports.eventBusName}
+    TENANT_ID: gbInnovations
+    APP_NAME: task-workflow
+  apiGateway:
+    apiKeys:
+      - name: producer-api-key-${self:provider.stage}
+    usagePlan:
+      quota:
+        limit: 10000
+        period: DAY
+      throttle:
+        burstLimit: 50
+        rateLimit: 100
+
+functions:
+
+  create-job:
+    handler: src/handlers/create-job.handler
+    description: Creates a new job with task DAG
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: /jobs
+          method: post
+          private: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action: sqs:SendMessage
+        Resource: ${self:custom.imports.queueArn}
+      - Effect: Allow
+        Action: events:PutEvents
+        Resource: "*"
+      - Effect: Allow
+        Action: dynamodb:GetItem
+        Resource: ${self:custom.imports.taskDefsTableArn}
+
+  add-tasks:
+    handler: src/handlers/add-tasks.handler
+    description: Adds tasks to an existing job
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: /jobs/{jobId}/tasks
+          method: post
+          private: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:Query
+        Resource:
+          - ${self:custom.imports.eventsTableArn}
+          - ${self:custom.imports.eventsTableArn}/index/*
+      - Effect: Allow
+        Action: sqs:SendMessage
+        Resource: ${self:custom.imports.queueArn}
+      - Effect: Allow
+        Action: events:PutEvents
+        Resource: "*"
+      - Effect: Allow
+        Action: dynamodb:GetItem
+        Resource: ${self:custom.imports.taskDefsTableArn}
+
+  list-jobs:
+    handler: src/handlers/list-jobs.handler
+    description: Lists all jobs with status
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: /jobs
+          method: get
+          private: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:Query
+        Resource:
+          - ${self:custom.imports.eventsTableArn}
+          - ${self:custom.imports.eventsTableArn}/index/*
+
+  get-job:
+    handler: src/handlers/get-job.handler
+    description: Gets job details with task statuses
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: /jobs/{jobId}
+          method: get
+          private: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:Query
+        Resource:
+          - ${self:custom.imports.eventsTableArn}
+          - ${self:custom.imports.eventsTableArn}/index/*
+
+  put-task-definition:
+    handler: src/handlers/put-task-definition.handler
+    description: Create or update a task definition
+    timeout: 10
+    memorySize: 256
+    events:
+      - http:
+          path: /task-definitions/{name}
+          method: put
+          private: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:PutItem
+        Resource: ${self:custom.imports.taskDefsTableArn}
+
+  list-task-definitions:
+    handler: src/handlers/list-task-definitions.handler
+    description: List all task definitions
+    timeout: 10
+    memorySize: 256
+    events:
+      - http:
+          path: /task-definitions
+          method: get
+          private: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:Scan
+        Resource: ${self:custom.imports.taskDefsTableArn}
