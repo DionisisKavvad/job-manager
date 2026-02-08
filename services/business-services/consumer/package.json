@@ -1,0 +1,18 @@
+{
+  "name": "job-manager-consumer",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "SQS consumer with Claude Agent SDK integration",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.76",
+    "@anthropic-ai/sdk": "^0.67.0",
+    "@aws-sdk/client-dynamodb": "^3.911.0",
+    "@aws-sdk/lib-dynamodb": "^3.911.0",
+    "@aws-sdk/client-eventbridge": "^3.911.0",
+    "@aws-sdk/client-s3": "^3.955.0",
+    "@aws-sdk/client-sqs": "^3.911.0",
+    "dotenv": "^17.2.3",
+    "uuid": "^11.0.4"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "job-manager",
+  "private": true,
+  "workspaces": [
+    "job-manager-ui",
+    "services/infrastructure/job-manager-infrastructure",
+    "services/business-services/event",
+    "services/business-services/producer-api",
+    "services/business-services/dispatcher",
+    "services/business-services/health-check",
+    "services/business-services/consumer"
+  ]
+}

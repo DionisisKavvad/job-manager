@@ -1,0 +1,4 @@
+profile: default
+slackBotToken: xoxb-dev-token-placeholder
+slackWebhookUrl: https://hooks.slack.com/services/PLACEHOLDER
+alertChannel: "#dev-alerts"

@@ -1,0 +1,13 @@
+{
+  "name": "job-manager-producer-api",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "REST API for job and task management",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.911.0",
+    "@aws-sdk/lib-dynamodb": "^3.911.0",
+    "@aws-sdk/client-sqs": "^3.911.0",
+    "@aws-sdk/client-eventbridge": "^3.911.0"
+  }
+}

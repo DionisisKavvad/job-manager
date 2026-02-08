@@ -1,0 +1,13 @@
+{
+  "name": "job-manager-health-check",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Task health monitoring with Slack alerting",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.911.0",
+    "@aws-sdk/lib-dynamodb": "^3.911.0",
+    "@aws-sdk/client-eventbridge": "^3.911.0",
+    "@slack/web-api": "^7.0.0"
+  }
+}

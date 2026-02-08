@@ -1,0 +1,4 @@
+profile: prod
+slackBotToken: xoxb-prod-token-placeholder
+slackWebhookUrl: https://hooks.slack.com/services/PLACEHOLDER
+alertChannel: "#prod-alerts"

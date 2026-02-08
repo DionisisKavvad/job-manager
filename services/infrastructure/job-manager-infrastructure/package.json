@@ -1,0 +1,6 @@
+{
+  "name": "job-manager-infrastructure",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Shared AWS infrastructure resources for job-manager"
+}
