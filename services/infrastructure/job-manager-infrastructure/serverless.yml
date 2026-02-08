@@ -1,0 +1,181 @@
+service: job-manager-infra
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+  profile: ${self:custom.resources.profile, 'default'}
+  stackTags:
+    Team: job-manager-${self:provider.stage}
+
+custom:
+  resources: ${file(../../../config/config.${self:provider.stage}.yml)}
+
+resources:
+  Resources:
+
+    # ── SQS ──────────────────────────────────────────────
+
+    TaskQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: task-queue-${self:provider.stage}
+        VisibilityTimeout: 900
+        MessageRetentionPeriod: 1209600
+        ReceiveMessageWaitTimeSeconds: 20
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt TaskDLQ.Arn
+          maxReceiveCount: 3
+
+    TaskDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: task-queue-dlq-${self:provider.stage}
+        MessageRetentionPeriod: 1209600
+
+    # ── EventBridge ──────────────────────────────────────
+
+    EventBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: job-manager-${self:provider.stage}
+
+    # ── DynamoDB — Events Table ──────────────────────────
+
+    EventsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: events-${self:provider.stage}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - { AttributeName: PK,     AttributeType: S }
+          - { AttributeName: SK,     AttributeType: S }
+          - { AttributeName: GSI1PK, AttributeType: S }
+          - { AttributeName: GSI1SK, AttributeType: S }
+          - { AttributeName: GSI2PK, AttributeType: S }
+          - { AttributeName: GSI2SK, AttributeType: S }
+          - { AttributeName: GSI3PK, AttributeType: S }
+          - { AttributeName: GSI3SK, AttributeType: S }
+          - { AttributeName: GSI4PK, AttributeType: S }
+          - { AttributeName: GSI4SK, AttributeType: S }
+          - { AttributeName: GSI5PK, AttributeType: S }
+          - { AttributeName: GSI5SK, AttributeType: S }
+          - { AttributeName: GSI6PK, AttributeType: S }
+          - { AttributeName: GSI6SK, AttributeType: S }
+          - { AttributeName: GSI7PK, AttributeType: S }
+          - { AttributeName: GSI7SK, AttributeType: S }
+        KeySchema:
+          - { AttributeName: PK, KeyType: HASH }
+          - { AttributeName: SK, KeyType: RANGE }
+        GlobalSecondaryIndexes:
+          - IndexName: GSI1-index
+            KeySchema:
+              - { AttributeName: GSI1PK, KeyType: HASH }
+              - { AttributeName: GSI1SK, KeyType: RANGE }
+            Projection: { ProjectionType: ALL }
+          - IndexName: GSI2-index
+            KeySchema:
+              - { AttributeName: GSI2PK, KeyType: HASH }
+              - { AttributeName: GSI2SK, KeyType: RANGE }
+            Projection: { ProjectionType: ALL }
+          - IndexName: GSI3-index
+            KeySchema:
+              - { AttributeName: GSI3PK, KeyType: HASH }
+              - { AttributeName: GSI3SK, KeyType: RANGE }
+            Projection: { ProjectionType: ALL }
+          - IndexName: GSI4-index
+            KeySchema:
+              - { AttributeName: GSI4PK, KeyType: HASH }
+              - { AttributeName: GSI4SK, KeyType: RANGE }
+            Projection: { ProjectionType: ALL }
+          - IndexName: GSI5-index
+            KeySchema:
+              - { AttributeName: GSI5PK, KeyType: HASH }
+              - { AttributeName: GSI5SK, KeyType: RANGE }
+            Projection: { ProjectionType: ALL }
+          - IndexName: GSI6-index
+            KeySchema:
+              - { AttributeName: GSI6PK, KeyType: HASH }
+              - { AttributeName: GSI6SK, KeyType: RANGE }
+            Projection: { ProjectionType: ALL }
+          - IndexName: GSI7-index
+            KeySchema:
+              - { AttributeName: GSI7PK, KeyType: HASH }
+              - { AttributeName: GSI7SK, KeyType: RANGE }
+            Projection: { ProjectionType: ALL }
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+
+    # ── DynamoDB — Task Definitions Table ────────────────
+
+    TaskDefinitionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: task-definitions-${self:provider.stage}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: name
+            KeyType: HASH
+
+    # ── S3 ───────────────────────────────────────────────
+
+    ArtifactsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: job-manager-artifacts-${self:provider.stage}
+
+  # ── Exports ──────────────────────────────────────────
+
+  Outputs:
+    TaskQueueUrl:
+      Value: !Ref TaskQueue
+      Export:
+        Name: job-manager-queue-url-${self:provider.stage}
+    TaskQueueArn:
+      Value: !GetAtt TaskQueue.Arn
+      Export:
+        Name: job-manager-queue-arn-${self:provider.stage}
+    TaskDLQUrl:
+      Value: !Ref TaskDLQ
+      Export:
+        Name: job-manager-dlq-url-${self:provider.stage}
+    TaskDLQArn:
+      Value: !GetAtt TaskDLQ.Arn
+      Export:
+        Name: job-manager-dlq-arn-${self:provider.stage}
+    EventsTableName:
+      Value: !Ref EventsTable
+      Export:
+        Name: job-manager-events-table-name-${self:provider.stage}
+    EventsTableArn:
+      Value: !GetAtt EventsTable.Arn
+      Export:
+        Name: job-manager-events-table-arn-${self:provider.stage}
+    TaskDefinitionsTableName:
+      Value: !Ref TaskDefinitionsTable
+      Export:
+        Name: job-manager-task-defs-table-name-${self:provider.stage}
+    TaskDefinitionsTableArn:
+      Value: !GetAtt TaskDefinitionsTable.Arn
+      Export:
+        Name: job-manager-task-defs-table-arn-${self:provider.stage}
+    EventBusName:
+      Value: !Ref EventBus
+      Export:
+        Name: job-manager-event-bus-name-${self:provider.stage}
+    EventBusArn:
+      Value: !GetAtt EventBus.Arn
+      Export:
+        Name: job-manager-event-bus-arn-${self:provider.stage}
+    ArtifactsBucketName:
+      Value: !Ref ArtifactsBucket
+      Export:
+        Name: job-manager-artifacts-bucket-${self:provider.stage}
+    ArtifactsBucketArn:
+      Value: !GetAtt ArtifactsBucket.Arn
+      Export:
+        Name: job-manager-artifacts-bucket-arn-${self:provider.stage}
