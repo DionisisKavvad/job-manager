@@ -1,0 +1,115 @@
+service: job-manager-event
+
+build:
+  esbuild: true
+
+custom:
+  resources: ${file(../../../config/config.${self:provider.stage}.yml)}
+  imports:
+    eventsTableName: !ImportValue job-manager-events-table-name-${self:provider.stage}
+    eventsTableArn: !ImportValue job-manager-events-table-arn-${self:provider.stage}
+    eventBusName: !ImportValue job-manager-event-bus-name-${self:provider.stage}
+    eventBusArn: !ImportValue job-manager-event-bus-arn-${self:provider.stage}
+    dlqArn: !ImportValue job-manager-dlq-arn-${self:provider.stage}
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+  profile: ${self:custom.resources.profile, 'default'}
+  stackTags:
+    Team: job-manager-event-${self:provider.stage}
+  environment:
+    ENVIRONMENT: ${self:provider.stage}
+    EVENTS_TABLE: ${self:custom.imports.eventsTableName}
+    EVENT_BUS_NAME: ${self:custom.imports.eventBusName}
+    TENANT_ID: gbInnovations
+    APP_NAME: task-workflow
+
+functions:
+
+  save-event-to-dynamo:
+    handler: src/save-event-to-dynamo.handler
+    description: Persists all events from EventBridge to DynamoDB
+    timeout: 30
+    memorySize: 256
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: ${self:custom.imports.eventsTableArn}
+
+  dlq-processor:
+    handler: src/dlq-processor.handler
+    description: Emits terminal Task Failed for DLQ messages
+    timeout: 30
+    memorySize: 256
+    events:
+      - sqs:
+          arn: ${self:custom.imports.dlqArn}
+          batchSize: 1
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - events:PutEvents
+        Resource: "*"
+
+  eventbridge-dlq-alert:
+    handler: src/eventbridge-dlq-alert.handler
+    description: Slack alert when EventBridge fails to deliver events
+    timeout: 30
+    memorySize: 256
+    environment:
+      SLACK_WEBHOOK_URL: ${self:custom.resources.slackWebhookUrl}
+    events:
+      - sqs:
+          arn: !GetAtt EventBridgeTargetDLQ.Arn
+          batchSize: 1
+
+resources:
+  Resources:
+
+    SaveEventRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: ${self:provider.stage}-save-event-to-dynamo
+        EventBusName: ${self:custom.imports.eventBusName}
+        EventPattern:
+          detail-type:
+            - "log-event"
+        Targets:
+          - Arn: !GetAtt SaveDasheventDashtoDashdynamoLambdaFunction.Arn
+            Id: save-event-target
+            DeadLetterConfig:
+              Arn: !GetAtt EventBridgeTargetDLQ.Arn
+            RetryPolicy:
+              MaximumRetryAttempts: 3
+              MaximumEventAgeInSeconds: 3600
+
+    SaveEventPermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName: !Ref SaveDasheventDashtoDashdynamoLambdaFunction
+        Action: lambda:InvokeFunction
+        Principal: events.amazonaws.com
+        SourceArn: !GetAtt SaveEventRule.Arn
+
+    EventBridgeTargetDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:provider.stage}-eventbridge-target-dlq
+        MessageRetentionPeriod: 1209600
+
+    EventBridgeTargetDLQPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref EventBridgeTargetDLQ
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt EventBridgeTargetDLQ.Arn
