@@ -15,7 +15,11 @@ All events flow through one path: **Sender → EventBridge → Lambda → Dynamo
 | `Task Pending` | Before sending to SQS | Producer |
 | `Task Processing Started` | Worker spawns child process | sqs-worker |
 | `Task Processing Failed` | Retryable error from child process — attempt-level, not terminal | sqs-worker |
-| `Task Completed` | Child exits with code 0 | sqs-worker |
+| `Task Updated` | Agent posts progress during execution (0..N per iteration) | sqs-worker |
+| `Task Completed` | Child exits with code 0, task does NOT require review | sqs-worker |
+| `Task Submitted For Review` | Child exits with code 0, task REQUIRES review | sqs-worker |
+| `Task Revision Requested` | Reviewer requests changes — task re-enqueued to SQS | Reviewer (AI/human via API) |
+| `Task Approved` | Reviewer approves — terminal, unlocks dependents | Reviewer (AI/human via API) |
 | `Task Failed` | Non-retryable error from child process, or DLQ (terminal) | sqs-worker / DLQ Lambda |
 | `Task Timeout` | Worker kills child process externally (SIGTERM → SIGKILL) | sqs-worker |
 | `Task Heartbeat` | On visibility extension | sqs-worker |
@@ -172,14 +176,35 @@ properties: {
 
 Note: no `retryable` field — `Task Processing Failed` is retryable by definition.
 
-#### `Task Completed`
+#### `Task Updated`
 
-Emitted by sqs-worker when child exits with code 0. Consumers: Dispatcher (trigger + reads output for dependent tasks), Idempotency (terminal).
+Emitted by sqs-worker when the agent posts progress during execution. 0..N per iteration. Does not change task state. Consumers: Dashboard (activity log), Reviewer (context).
 
 ```javascript
 properties: {
   requestId: "req-123",
   jobId: "job-456",           // only if part of a job
+  iteration: 1,
+  update: {
+    message: "Added contrast ratios for all color pairs",
+    // optional structured data — agent decides what to include:
+    commits: ["abc123", "def456"],
+    branch: "feature/color-tags",
+    filesChanged: ["src/palette.json", "src/contrast.js"],
+    metadata: { ... }
+  }
+}
+```
+
+#### `Task Completed`
+
+Emitted by sqs-worker when child exits with code 0 AND `requiresReview: false`. Terminal — Dispatcher unlocks dependents immediately. Consumers: Dispatcher (trigger + reads output for dependent tasks), Idempotency (terminal).
+
+```javascript
+properties: {
+  requestId: "req-123",
+  jobId: "job-456",           // only if part of a job
+  iteration: 1,
   output: { ... },            // task result — passed to dependent tasks by Dispatcher
   durationMs: 45000,
   exitCode: 0,
@@ -190,6 +215,75 @@ properties: {
   }
 }
 ```
+
+#### `Task Submitted For Review`
+
+Emitted by sqs-worker when child exits with code 0 AND `requiresReview: true`. State becomes `in_review` — Dispatcher does NOT unlock dependents. Consumers: Reviewer (trigger), Dashboard (state).
+
+```javascript
+properties: {
+  requestId: "req-123",
+  jobId: "job-456",           // only if part of a job
+  iteration: 1,
+  output: { ... },            // task result for reviewer to inspect
+  summary: "Generated 5-color palette with contrast ratios",
+  repo: "org/frontend-app",   // optional — which repo the work was done in
+  branch: "feature/color-tags", // optional
+  durationMs: 37000,
+  usage: {
+    inputTokens: 12000,
+    outputTokens: 3500,
+    cacheReadTokens: 8000
+  }
+}
+```
+
+#### `Task Revision Requested`
+
+Emitted by reviewer (AI agent or human via API) when review finds issues. Task re-enqueued to SQS with `iteration + 1`, previous output, and reviewer feedback. Consumers: Dispatcher (re-enqueue), Dashboard (state).
+
+```javascript
+properties: {
+  requestId: "req-123",
+  jobId: "job-456",           // only if part of a job
+  iteration: 1,               // revision OF this iteration
+  feedback: "Missing neutral colors. Accent palette needs warmer tones.",
+  reviewer: "ai-reviewer-001", // or "human:username"
+  severity: "minor"           // "minor" | "major" | "critical"
+}
+```
+
+On `Task Revision Requested`, the task is re-enqueued to SQS with:
+```javascript
+{
+  taskId: "color-tags",
+  jobId: "job-456",
+  name: "color-tags",
+  input: { ... },                    // original static input
+  iteration: 2,                      // incremented
+  previousOutput: { ... },           // output from the Submitted For Review event
+  reviewFeedback: "Missing neutral colors..."  // reviewer's feedback
+}
+```
+
+Max iterations safeguard: if `iteration > MAX_TASK_ITERATIONS` (default 5), emit `Task Failed` instead of re-enqueuing.
+
+#### `Task Approved`
+
+Emitted by reviewer (AI agent or human via API) when review passes. Terminal — Dispatcher unlocks dependents. Consumers: Dispatcher (trigger — same as Task Completed), Idempotency (terminal).
+
+```javascript
+properties: {
+  requestId: "req-123",
+  jobId: "job-456",           // only if part of a job
+  iteration: 1,               // which iteration was approved
+  reviewer: "ai-reviewer-001", // or "human:username"
+  comment: "Palette is well-balanced, contrast ratios meet WCAG AA",
+  totalIterations: 1           // how many iterations it took
+}
+```
+
+The approved output is NOT duplicated here — it lives in the preceding `Task Submitted For Review` event. The Dispatcher reads the output from there when building `dependencyOutputs` for downstream tasks.
 
 #### `Task Failed`
 
@@ -436,24 +530,45 @@ Derive task states from **existing events**. No materialized state record — pu
 ### State Machine
 
 ```
-pending ──→ processing ──→ completed
+                                    ┌──────────────────────────────────────┐
+                                    │                                      │
+pending ──→ processing ──→ completed (no review)                          │
+                │                                                          │
+                ├──→ in_review ──→ approved (reviewed, terminal)           │
+                │        │                                                 │
+                │        └──→ pending (revision requested) ────────────────┘
                 │
                 └──→ failed
 ```
+
+Tasks WITHOUT `requiresReview`: `pending → processing → completed` (unchanged)
+Tasks WITH `requiresReview`: `pending → processing → in_review → approved` (or loop via revision)
 
 ### Event-to-State Mapping
 
 ```javascript
 const EVENT_TO_STATE = {
-  'Task Pending':             'pending',
-  'Task Processing Started':  'processing',
-  'Task Processing Failed':   'processing',   // attempt failed, SQS will retry
-  'Task Completed':           'completed',
-  'Task Failed':              'failed',        // terminal (non-retryable or DLQ)
-  'Task Timeout':             'failed',
-  'Task Heartbeat':           'processing',
+  'Task Pending':               'pending',
+  'Task Processing Started':    'processing',
+  'Task Processing Failed':     'processing',   // attempt failed, SQS will retry
+  'Task Updated':               'processing',   // progress update, no state change
+  'Task Completed':             'completed',    // terminal — tasks WITHOUT review
+  'Task Submitted For Review':  'in_review',    // agent done, awaiting reviewer
+  'Task Revision Requested':    'pending',      // reviewer wants changes, re-enqueued
+  'Task Approved':              'completed',    // terminal — tasks WITH review
+  'Task Failed':                'failed',       // terminal (non-retryable or DLQ)
+  'Task Timeout':               'failed',
+  'Task Heartbeat':             'processing',
 };
 ```
+
+### Dispatcher Dependency Unlocking
+
+The Dispatcher unlocks dependent tasks when a task reaches a terminal success state:
+- `Task Completed` — tasks without review
+- `Task Approved` — tasks with review
+
+Both map to `completed` in `EVENT_TO_STATE`, so the Dispatcher logic stays simple: unlock when state = `completed`.
 
 ### Query: Single Task State
 
@@ -473,13 +588,15 @@ const currentState = EVENT_TO_STATE[result.Items[0].eventType];
 
 ### Query: All Tasks by State
 
-Four parallel queries + client-side set math:
+Six parallel queries + client-side set math:
 
 ```javascript
-const [pending, processing, completed, failed] = await Promise.all([
+const [pending, processing, completed, approved, inReview, failed] = await Promise.all([
   queryByEventType('Task Pending'),
   queryByEventType('Task Processing Started'),
   queryByEventType('Task Completed'),
+  queryByEventType('Task Approved'),
+  queryByEventType('Task Submitted For Review'),
   queryByEventType('Task Failed')
 ]);
 
@@ -498,14 +615,20 @@ async function queryByEventType(eventType) {
 
 // Set subtraction for CURRENT state
 const completedIds  = new Set(completed.map(e => e.properties.requestId));
+const approvedIds   = new Set(approved.map(e => e.properties.requestId));
+const inReviewIds   = new Set(inReview.map(e => e.properties.requestId));
 const failedIds     = new Set(failed.map(e => e.properties.requestId));
 const processingIds = new Set(processing.map(e => e.properties.requestId));
 const pendingIds    = new Set(pending.map(e => e.properties.requestId));
 
+// Both Task Completed and Task Approved = terminal success
+const allDoneIds = new Set([...completedIds, ...approvedIds]);
+
 const currentlyPending    = difference(pendingIds, processingIds);
-const currentlyProcessing = difference(processingIds, completedIds, failedIds);
+const currentlyProcessing = difference(processingIds, allDoneIds, inReviewIds, failedIds);
+const currentlyInReview   = difference(inReviewIds, approvedIds, pendingIds);  // in review and not yet approved or sent back
 const currentlyFailed     = difference(failedIds, processingIds);  // failed and not retried
-const currentlyCompleted  = completedIds;
+const currentlyCompleted  = allDoneIds;
 
 function difference(setA, ...others) {
   const result = new Set(setA);

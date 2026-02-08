@@ -110,10 +110,13 @@ while (running) {
 2. Extract `requestId` from `message.MessageAttributes.requestId.StringValue`
 3. Validate format: `/^[a-zA-Z0-9-_]{1,256}$/`
 4. Check `ApproximateReceiveCount` against `MAX_MESSAGE_RETRIES` (3)
-5. Start visibility extension interval
-6. Spawn child process → wait for exit
-7. On exit 0: delete message
-8. On child exit with error: two paths depending on **who** killed the process:
+5. Check `iteration` against `MAX_TASK_ITERATIONS` (5) — if exceeded, emit `Task Failed`, delete message
+6. Start visibility extension interval
+7. Spawn child process → wait for exit
+8. On exit 0: check `requiresReview` from task definition:
+   - `false` → emit `Task Completed` → delete message
+   - `true` → emit `Task Submitted For Review` → delete message
+9. On child exit with error: two paths depending on **who** killed the process:
    - **Worker killed child** (CLAUDE_TIMEOUT expired → SIGTERM → SIGKILL): emit `Task Timeout` → delete message
    - **Child exited on its own** (exit code 1): classify error with `error-classifier.js`:
      - Programming error (TypeError, ReferenceError, SyntaxError, RangeError): emit `Task Failed` → delete immediately
@@ -339,12 +342,53 @@ The consumer emits the following events:
 |-------|------|------------|
 | `Task Processing Started` | Worker spawns child process | sqs-worker |
 | `Task Processing Failed` | Retryable error (attempt-level) | sqs-worker |
-| `Task Completed` | Child exits with code 0 | sqs-worker |
+| `Task Updated` | Agent posts progress during execution (0..N) | sqs-worker |
+| `Task Completed` | Child exits with code 0, `requiresReview: false` | sqs-worker |
+| `Task Submitted For Review` | Child exits with code 0, `requiresReview: true` | sqs-worker |
 | `Task Failed` | Non-retryable error, or DLQ (terminal) | sqs-worker / DLQ Lambda |
 | `Task Timeout` | Child process killed by worker | sqs-worker |
 | `Task Heartbeat` | On visibility extension | sqs-worker |
 
+**Review lifecycle events** (not emitted by consumer — emitted by reviewer):
+
+| Event | When | Emitted By |
+|-------|------|------------|
+| `Task Revision Requested` | Reviewer requests changes | Reviewer (AI/human via API) |
+| `Task Approved` | Reviewer approves | Reviewer (AI/human via API) |
+
 **Key design**: The sqs-worker emits workflow-level events directly (not the child process). This ensures events are recorded even if the child is killed (SIGKILL).
+
+### Worker Review Flow
+
+When the worker receives an SQS message, it checks the task definition's `requiresReview` field:
+
+```
+Child exits with code 0
+    │
+    ├── requiresReview: false → emit "Task Completed" → delete SQS message
+    │                           Dispatcher unlocks dependents immediately.
+    │
+    └── requiresReview: true  → emit "Task Submitted For Review" → delete SQS message
+                                 Task enters 'in_review'. Dispatcher does NOT unlock dependents.
+                                 Reviewer will emit "Task Approved" or "Task Revision Requested".
+```
+
+On `Task Revision Requested`, the task is re-enqueued to SQS (by the review handler Lambda or API) with the previous output and reviewer feedback as additional input. The worker processes it as a new iteration.
+
+```javascript
+// SQS message for revision (iteration 2+)
+{
+  taskId: "color-tags",
+  jobId: "job-456",
+  name: "color-tags",
+  input: { style: "modern" },              // original static input
+  iteration: 2,                            // incremented from previous
+  previousOutput: { ... },                 // output from iteration 1
+  reviewFeedback: "Missing neutral colors"  // reviewer's feedback
+}
+```
+
+Max iterations safeguard: if `iteration > MAX_TASK_ITERATIONS` (default 5), emit `Task Failed` instead of processing.
 
 For event structure, GSI keys, DynamoDB schema, persistence Lambda, task state tracking, and query patterns — see [event-system.md](./event-system.md).
 

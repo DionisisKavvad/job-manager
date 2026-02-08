@@ -15,14 +15,22 @@ A task definition is a named template that tells the worker **what** to do and *
 | `name` | Yes | Unique identifier. Format: `/^[a-zA-Z0-9-_]{1,64}$/` |
 | `description` | Yes | What needs to be done — becomes the task prompt for Claude |
 | `tag` | Yes | Which role should execute — defines persona/expertise |
+| `requiresReview` | No | If `true`, task goes to `in_review` instead of `completed`. Default: `false` |
+| `repo` | No | GitHub repository (e.g. `org/frontend-app`). Passed to agent as context |
 
 ```javascript
 {
   name: "color-tags",
   description: "Analyze the store's visual identity and generate a color palette with semantic tags (primary, secondary, accent, neutral). Include hex codes, contrast ratios, and usage recommendations.",
-  tag: "designer"
+  tag: "designer",
+  requiresReview: true,
+  repo: "org/frontend-app"
 }
 ```
+
+### Review Lifecycle
+
+When `requiresReview: true`, the worker emits `Task Submitted For Review` instead of `Task Completed` when the agent finishes. The task enters `in_review` state and waits for a reviewer (AI or human) to approve or request revision. See [event-system.md](./event-system.md) for full event flow.
 
 ### Tag = Role
 
@@ -45,7 +53,7 @@ The consumer builds the prompt for Claude from the task definition + runtime inp
 ```javascript
 // src/workflow/prompt-builder.js
 
-function buildPrompt({ taskDefinition, input, dependencyOutputs }) {
+function buildPrompt({ taskDefinition, input, dependencyOutputs, iteration, previousOutput, reviewFeedback }) {
   const sections = [
     `# Role\nYou are a ${taskDefinition.tag}.`,
     `# Task\n${taskDefinition.description}`,
@@ -59,11 +67,19 @@ function buildPrompt({ taskDefinition, input, dependencyOutputs }) {
     sections.push(`# Context from Previous Tasks\n${JSON.stringify(dependencyOutputs, null, 2)}`);
   }
 
+  // Revision context — only present on iteration 2+
+  if (iteration > 1 && previousOutput) {
+    sections.push(`# Previous Output (Iteration ${iteration - 1})\n${JSON.stringify(previousOutput, null, 2)}`);
+  }
+  if (reviewFeedback) {
+    sections.push(`# Reviewer Feedback\nThe reviewer requested the following changes:\n${reviewFeedback}`);
+  }
+
   return sections.join('\n\n');
 }
 ```
 
-Example assembled prompt:
+Example assembled prompt (first iteration):
 
 ```
 # Role
@@ -87,6 +103,36 @@ and usage recommendations.
     "logoUrl": "https://..."
   }
 }
+```
+
+Example assembled prompt (revision — iteration 2):
+
+```
+# Role
+You are a designer.
+
+# Task
+Analyze the store's visual identity and generate a color palette with semantic
+tags (primary, secondary, accent, neutral). Include hex codes, contrast ratios,
+and usage recommendations.
+
+# Input
+{
+  "style": "modern"
+}
+
+# Previous Output (Iteration 1)
+{
+  "palette": [
+    { "name": "primary", "hex": "#1a1a2e" },
+    { "name": "accent", "hex": "#e94560" }
+  ]
+}
+
+# Reviewer Feedback
+The reviewer requested the following changes:
+Missing neutral colors. The accent palette needs warmer tones. Also add
+contrast ratios for all color pairs.
 ```
 
 ---
@@ -118,6 +164,8 @@ TaskDefinitionsTable:
   name: "color-tags",                       // PK
   description: "Analyze the store's visual identity and generate...",
   tag: "designer",
+  requiresReview: true,                     // task goes to in_review on completion
+  repo: "org/frontend-app",                 // optional — GitHub repo context
   createdAt: 1707300000000,
   updatedAt: 1707300000000
 }
@@ -256,12 +304,20 @@ export async function handler(event) {
       name,
       description: body.description,
       tag: body.tag,
+      requiresReview: body.requiresReview || false,
+      repo: body.repo || null,
       updatedAt: now,
       createdAt: now       // overwritten on update — acceptable for simplicity
     }
   }));
 
-  return success(200, { name, description: body.description, tag: body.tag });
+  return success(200, {
+    name,
+    description: body.description,
+    tag: body.tag,
+    requiresReview: body.requiresReview || false,
+    repo: body.repo || null
+  });
 }
 ```
 
@@ -289,7 +345,9 @@ export async function handler() {
     definitions: (result.Items || []).map(item => ({
       name: item.name,
       description: item.description,
-      tag: item.tag
+      tag: item.tag,
+      requiresReview: item.requiresReview || false,
+      repo: item.repo || null
     }))
   });
 }
@@ -303,27 +361,37 @@ Response — 200 OK:
     {
       "name": "scrape-store",
       "description": "Extract product data, branding assets, color palette, and metadata from the given store URL.",
-      "tag": "scraper"
+      "tag": "scraper",
+      "requiresReview": false,
+      "repo": null
     },
     {
       "name": "color-tags",
       "description": "Analyze the store's visual identity and generate a color palette with semantic tags...",
-      "tag": "designer"
+      "tag": "designer",
+      "requiresReview": true,
+      "repo": "org/frontend-app"
     },
     {
       "name": "analyze-competitors",
       "description": "Research and analyze competitor stores in the same market segment...",
-      "tag": "analyst"
+      "tag": "analyst",
+      "requiresReview": false,
+      "repo": null
     },
     {
       "name": "font-pairing",
       "description": "Based on the store's visual identity, recommend 2-3 font pairings with usage guidelines...",
-      "tag": "designer"
+      "tag": "designer",
+      "requiresReview": true,
+      "repo": "org/frontend-app"
     },
     {
       "name": "compile-result",
       "description": "Aggregate all task outputs into a final comprehensive brand analysis report.",
-      "tag": "compiler"
+      "tag": "compiler",
+      "requiresReview": false,
+      "repo": null
     }
   ]
 }

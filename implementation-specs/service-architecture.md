@@ -801,6 +801,7 @@ functions:
             detail:
               eventType:
                 - "Task Completed"
+                - "Task Approved"
                 - "Task Failed"
     iamRoleStatements:
       - Effect: Allow

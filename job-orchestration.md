@@ -142,7 +142,7 @@ Each task's events include the jobId so they can be linked:
 
 ## Dispatcher Lambda
 
-Triggered by EventBridge rule on "Task Completed" / "Task Failed" events:
+Triggered by EventBridge rule on "Task Completed" / "Task Approved" / "Task Failed" events:
 
 ```yaml
 # In serverless.yml — add to functions:
@@ -162,6 +162,7 @@ Triggered by EventBridge rule on "Task Completed" / "Task Failed" events:
             detail:
               eventType:
                 - "Task Completed"
+                - "Task Approved"
                 - "Task Failed"
     iamRoleStatements:
       - Effect: Allow
@@ -182,6 +183,20 @@ Triggered by EventBridge rule on "Task Completed" / "Task Failed" events:
 
 ```javascript
 // src/task-dispatcher.js
+
+const EVENT_TO_STATE = {
+  'Task Pending':               'pending',
+  'Task Processing Started':    'processing',
+  'Task Processing Failed':     'processing',
+  'Task Updated':               'processing',
+  'Task Completed':             'completed',    // terminal — no review
+  'Task Submitted For Review':  'in_review',
+  'Task Revision Requested':    'pending',
+  'Task Approved':              'completed',    // terminal — reviewed
+  'Task Failed':                'failed',
+  'Task Timeout':               'failed',
+  'Task Heartbeat':             'processing',
+};
 
 export async function handler(event) {
   const detail = event.detail;
@@ -211,7 +226,6 @@ export async function handler(event) {
   // 3. Check for non-retryable failure → emit detection event (don't stop dispatching)
   const failedTasks = taskDag.filter(t => taskStatuses[t.taskId] === 'failed');
   if (failedTasks.length > 0) {
-    // Check if we already emitted Job Failure Detected for this job
     const existingFailure = await getJobFailureDetectedEvent(jobId);
     if (!existingFailure) {
       await emitEvent('Job Failure Detected', {
@@ -221,10 +235,13 @@ export async function handler(event) {
       });
     }
     // Don't return — continue dispatching ready tasks.
-    // In-progress and independent tasks keep running.
   }
 
   // 4. Find tasks ready to dispatch (all dependencies completed)
+  //    A dependency is "completed" when its state is 'completed' —
+  //    this covers BOTH Task Completed (no review) AND Task Approved (reviewed),
+  //    since both map to 'completed' in EVENT_TO_STATE.
+  //    Tasks in 'in_review' are NOT completed — dependents must wait.
   const readyTasks = taskDag.filter(task => {
     if (taskStatuses[task.taskId]) return false; // already started or done
     return task.dependsOn.every(depId => taskStatuses[depId] === 'completed');
@@ -233,10 +250,12 @@ export async function handler(event) {
   // 5. Enqueue ready tasks to SQS
   for (const task of readyTasks) {
     // Gather outputs from completed dependencies
+    // For reviewed tasks: output lives in "Task Submitted For Review" event (not Task Approved)
+    // For non-reviewed tasks: output lives in "Task Completed" event
     const dependencyOutputs = {};
     for (const depId of task.dependsOn) {
-      const completedEvent = await getTaskCompletedEvent(depId);
-      dependencyOutputs[depId] = completedEvent.properties.output;
+      const outputEvent = await getTaskOutputEvent(depId);
+      dependencyOutputs[depId] = outputEvent.properties.output;
     }
 
     await sqsClient.send(new SendMessageCommand({
@@ -245,8 +264,8 @@ export async function handler(event) {
         taskId: task.taskId,
         jobId,
         name: task.name,
-        input: task.input || {},              // static input from job definition
-        dependencyOutputs                     // outputs from completed parent tasks
+        input: task.input || {},
+        dependencyOutputs
       }),
       MessageAttributes: {
         requestId: { DataType: 'String', StringValue: task.taskId }
@@ -270,6 +289,21 @@ export async function handler(event) {
       taskStatuses
     });
   }
+}
+
+// Helper: get the event that carries the task's output
+// For reviewed tasks: "Task Submitted For Review" (last one = latest iteration)
+// For non-reviewed tasks: "Task Completed"
+async function getTaskOutputEvent(taskId) {
+  const allEvents = await getAllTaskEvents(taskId); // GSI1: TASK#{taskId}, ScanIndexForward: true
+  const submittedForReview = allEvents.filter(e => e.eventType === 'Task Submitted For Review');
+  const completed = allEvents.find(e => e.eventType === 'Task Completed');
+
+  // If task was reviewed, the last Submitted For Review has the final output
+  if (submittedForReview.length > 0) {
+    return submittedForReview[submittedForReview.length - 1];
+  }
+  return completed;
 }
 ```
 
@@ -302,20 +336,29 @@ Job Created
     │
     │  Dispatch root tasks (no dependencies)
     │
-    ├──→ Task A: pending → processing → completed ─┐
-    ├──→ Task B: pending → processing → completed  │
-    │                                               │
-    │  Dispatcher checks dependencies               │
-    │                                               │
-    ├──→ Task C: pending → processing → completed ─┤  (unlocked by A)
-    ├──→ Task D: pending → processing → completed ─┤  (unlocked by A)
-    │                                               │
-    │  Dispatcher checks dependencies               │
-    │                                               │
-    └──→ Task E: pending → processing → completed   (unlocked by C+D)
+    ├──→ Task A: pending → processing → completed              (no review)
+    ├──→ Task B: pending → processing → completed              (no review)
+    │
+    │  Dispatcher checks dependencies
+    │
+    ├──→ Task C: pending → processing → in_review → approved   (requiresReview)
+    ├──→ Task D: pending → processing → in_review              (requiresReview)
+    │                                       │
+    │                                       └──→ revision_requested
+    │                                              │
+    │                                       pending → processing → in_review → approved
+    │
+    │  Dispatcher checks dependencies (both C and D must be 'completed')
+    │
+    └──→ Task E: pending → processing → completed              (unlocked by C+D approved)
               │
               ▼
          Job Completed
+
+    Dependency unlocking:
+    - Task Completed (no review) = 'completed' → unlocks dependents
+    - Task Approved (reviewed) = 'completed' → unlocks dependents
+    - Task Submitted For Review = 'in_review' → does NOT unlock dependents
 
     At any point:
     Task X failed (non-retryable) → Job Failure Detected
