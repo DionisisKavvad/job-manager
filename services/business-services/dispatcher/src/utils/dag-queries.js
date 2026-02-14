@@ -2,6 +2,21 @@ import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 
 const TABLE_NAME = process.env.EVENTS_TABLE;
 
+export async function getLatestJobSaved(ddbClient, jobId) {
+  const result = await ddbClient.send(new QueryCommand({
+    TableName: TABLE_NAME,
+    IndexName: 'GSI5-index',
+    KeyConditionExpression: 'GSI5PK = :pk AND begins_with(GSI5SK, :sk)',
+    ExpressionAttributeValues: {
+      ':pk': 'EVENT#Job Saved',
+      ':sk': `TENANT#${process.env.TENANT_ID || 'gbInnovations'}#JOB#${jobId}`,
+    },
+    ScanIndexForward: false,
+    Limit: 1,
+  }));
+  return result.Items?.[0] || null;
+}
+
 export async function getAllJobEvents(ddbClient, jobId) {
   const result = await ddbClient.send(new QueryCommand({
     TableName: TABLE_NAME,

@@ -1,9 +1,7 @@
-import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { validateDag } from '../lib/dag-validator.js';
-import { validateTaskNames } from '../lib/task-name-validator.js';
 import { getJobDag, getAllJobEvents, getLatestTaskEvent } from '../lib/job-queries.js';
 import { buildEvent } from '../lib/event-builder.js';
 import { success, error } from '../lib/response.js';
@@ -23,7 +21,6 @@ const EVENT_TO_STATE = {
   'Task Heartbeat': 'processing',
 };
 
-const sqsClient = new SQSClient({});
 const ebClient = new EventBridgeClient({});
 const ddbClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
@@ -47,49 +44,41 @@ export async function handler(event) {
       return error(409, { error: 'Job already completed — cannot add tasks' });
     }
 
-    // 3. Validate combined DAG
-    const combinedTasks = [...existingDag.tasks, ...newTasks];
-    const validation = validateDag(combinedTasks, {
-      existingIds: new Set(existingDag.tasks.map(t => t.taskId)),
-    });
+    // 3. Validate new tasks against existing IDs (dupes, deps, cycles)
+    const existingIds = new Set(existingDag.tasks.map(t => t.taskId));
+    const validation = validateDag(newTasks, { existingIds });
     if (!validation.valid) {
       return error(400, { errors: validation.errors });
     }
 
-    // 4. Validate task names against registry
-    const nameValidation = await validateTaskNames(ddbClient, newTasks);
-    if (!nameValidation.valid) {
-      return error(400, { errors: nameValidation.errors });
-    }
+    const combinedTasks = [...existingDag.tasks, ...newTasks];
 
-    // 5. Emit "Job Tasks Added" event
-    const jobTasksAddedEvent = buildEvent('Job Tasks Added', {
+    // 4. Direct write "Job Saved" with full merged state
+    const jobSavedEvent = buildEvent('Job Saved', {
       entityId: jobId,
       entityType: 'JOB',
       properties: {
         jobId,
-        newTasks: newTasks.map(t => ({
+        tasks: combinedTasks.map(t => ({
           taskId: t.taskId,
           name: t.name,
+          description: t.description,
+          tag: t.tag,
+          requiresReview: t.requiresReview || false,
+          repo: t.repo || null,
           dependsOn: t.dependsOn || [],
           input: t.input || {},
         })),
-        previousTotalTasks: existingDag.tasks.length,
-        totalTasksNow: combinedTasks.length,
+        totalTasks: combinedTasks.length,
       },
     });
 
-    await ebClient.send(new PutEventsCommand({
-      Entries: [{
-        EventBusName: config.EVENT_BUS_NAME,
-        Source: `task-workflow.${config.APP_NAME}`,
-        DetailType: 'log-event',
-        Detail: JSON.stringify(jobTasksAddedEvent),
-        Time: new Date(now),
-      }],
+    await ddbClient.send(new PutCommand({
+      TableName: config.TABLE_NAME,
+      Item: jobSavedEvent,
     }));
 
-    // 6. Check which new tasks are immediately ready
+    // 5. Check which new tasks are immediately ready
     const readyTasks = [];
 
     for (const task of newTasks) {
@@ -112,21 +101,8 @@ export async function handler(event) {
       }
     }
 
-    // 7. Enqueue ready tasks
+    // 6. Emit Task Pending for ready tasks (task-enqueuer forwards to SQS)
     for (const task of readyTasks) {
-      await sqsClient.send(new SendMessageCommand({
-        QueueUrl: config.TASK_QUEUE_URL,
-        MessageBody: JSON.stringify({
-          taskId: task.taskId,
-          jobId,
-          name: task.name,
-          input: task.input || {},
-        }),
-        MessageAttributes: {
-          requestId: { DataType: 'String', StringValue: task.taskId },
-        },
-      }));
-
       const taskPendingEvent = buildEvent('Task Pending', {
         entityId: task.taskId,
         entityType: 'TASK',
@@ -134,6 +110,11 @@ export async function handler(event) {
           requestId: task.taskId,
           jobId,
           name: task.name,
+          description: task.description,
+          tag: task.tag,
+          requiresReview: task.requiresReview || false,
+          repo: task.repo || null,
+          input: task.input || {},
           dependsOn: task.dependsOn || [],
         },
       });

@@ -107,26 +107,12 @@ resources:
           AttributeName: ttl
           Enabled: true
 
-    # ── DynamoDB — Task Definitions Table ────────────────
-
-    TaskDefinitionsTable:
-      Type: AWS::DynamoDB::Table
-      Properties:
-        TableName: task-definitions-${self:provider.stage}
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          - AttributeName: name
-            AttributeType: S
-        KeySchema:
-          - AttributeName: name
-            KeyType: HASH
-
     # ── S3 ───────────────────────────────────────────────
 
     ArtifactsBucket:
       Type: AWS::S3::Bucket
       Properties:
-        BucketName: job-manager-artifacts-${self:provider.stage}
+        BucketName: job-manager-artifacts-${self:provider.stage}-${aws:accountId}
 
   # ── Exports ──────────────────────────────────────────
 
@@ -155,14 +141,6 @@ resources:
       Value: !GetAtt EventsTable.Arn
       Export:
         Name: job-manager-events-table-arn-${self:provider.stage}
-    TaskDefinitionsTableName:
-      Value: !Ref TaskDefinitionsTable
-      Export:
-        Name: job-manager-task-defs-table-name-${self:provider.stage}
-    TaskDefinitionsTableArn:
-      Value: !GetAtt TaskDefinitionsTable.Arn
-      Export:
-        Name: job-manager-task-defs-table-arn-${self:provider.stage}
     EventBusName:
       Value: !Ref EventBus
       Export:

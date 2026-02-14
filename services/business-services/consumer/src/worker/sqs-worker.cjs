@@ -56,7 +56,7 @@ const ENV_ALLOWLIST = [
   'CLAUDE_MODEL', 'DEFAULT_TIMEOUT',
   'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION',
   'S3_BUCKET', 'DELETE_FILES_AFTER_UPLOAD',
-  'EVENTBRIDGE_BUS_NAME', 'TENANT_ID', 'APP_NAME', 'TASK_DEFINITIONS_TABLE',
+  'EVENTBRIDGE_BUS_NAME', 'TENANT_ID', 'APP_NAME',
 ];
 
 let running = true;
@@ -303,9 +303,8 @@ async function processMessage(message) {
       durationMs = parsed.durationMs || durationMs;
     } catch {}
 
-    // Check requiresReview — need task definition
-    const taskDef = await getTaskDefinition(body.name);
-    const requiresReview = taskDef?.requiresReview || false;
+    // Check requiresReview from SQS message body
+    const requiresReview = body.requiresReview || false;
 
     if (requiresReview) {
       await emitEvent('Task Submitted For Review', {
@@ -317,7 +316,7 @@ async function processMessage(message) {
           iteration,
           output,
           summary: typeof output === 'object' ? JSON.stringify(output).substring(0, 200) : String(output).substring(0, 200),
-          ...(taskDef.repo && { repo: taskDef.repo }),
+          ...(body.repo && { repo: body.repo }),
           durationMs,
           usage,
         },
@@ -393,20 +392,6 @@ async function processMessage(message) {
   } finally {
     clearInterval(extensionInterval);
     activeProcesses--;
-  }
-}
-
-async function getTaskDefinition(name) {
-  if (!name) return null;
-  try {
-    const { DynamoDBDocumentClient: DocClient, GetCommand } = await import('@aws-sdk/lib-dynamodb');
-    const result = await ddbClient.send(new GetCommand({
-      TableName: process.env.TASK_DEFINITIONS_TABLE,
-      Key: { name },
-    }));
-    return result.Item || null;
-  } catch {
-    return null;
   }
 }
 

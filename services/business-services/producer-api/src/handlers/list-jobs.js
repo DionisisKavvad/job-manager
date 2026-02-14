@@ -15,8 +15,8 @@ export async function handler(event) {
     const statusFilter = params.status || null;
 
     // Three parallel queries
-    const [createdResult, completedResult, failureResult] = await Promise.all([
-      queryEventType('Job Created', { limit, cursor }),
+    const [savedResult, completedResult, failureResult] = await Promise.all([
+      queryEventType('Job Saved', { limit: limit * 3, cursor }),
       queryEventType('Job Completed'),
       queryEventType('Job Failure Detected'),
     ]);
@@ -28,9 +28,19 @@ export async function handler(event) {
       failureResult.Items.map(e => e.properties.jobId)
     );
 
+    // Deduplicate by entityId — keep latest per job (results are desc by timestamp)
+    const seenJobIds = new Set();
+    const uniqueItems = [];
+    for (const item of savedResult.Items) {
+      if (!seenJobIds.has(item.entityId)) {
+        seenJobIds.add(item.entityId);
+        uniqueItems.push(item);
+      }
+    }
+
     // Build job list
-    let jobs = createdResult.Items.map(event => {
-      const jobId = event.properties.jobId;
+    let jobs = uniqueItems.map(event => {
+      const jobId = event.entityId;
       let status = 'processing';
       if (completedJobIds.has(jobId)) status = 'completed';
       else if (failedJobIds.has(jobId)) status = 'partial_failure';
@@ -49,8 +59,8 @@ export async function handler(event) {
     }
 
     // Pagination cursor
-    const nextCursor = createdResult.LastEvaluatedKey
-      ? Buffer.from(JSON.stringify(createdResult.LastEvaluatedKey)).toString('base64url')
+    const nextCursor = savedResult.LastEvaluatedKey
+      ? Buffer.from(JSON.stringify(savedResult.LastEvaluatedKey)).toString('base64url')
       : null;
 
     return success(200, { jobs, nextCursor });

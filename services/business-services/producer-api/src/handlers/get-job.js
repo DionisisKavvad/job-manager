@@ -23,7 +23,27 @@ export async function handler(event) {
   try {
     const jobId = event.pathParameters.jobId;
 
-    // 1. Get all job-level events
+    // 1. Get latest Job Saved from GSI5
+    const jobSavedResult = await ddbClient.send(new QueryCommand({
+      TableName: config.TABLE_NAME,
+      IndexName: 'GSI5-index',
+      KeyConditionExpression: 'GSI5PK = :pk AND begins_with(GSI5SK, :sk)',
+      ExpressionAttributeValues: {
+        ':pk': 'EVENT#Job Saved',
+        ':sk': `TENANT#${config.TENANT_ID}#JOB#${jobId}`,
+      },
+      ScanIndexForward: false,
+      Limit: 1,
+    }));
+
+    const jobSaved = jobSavedResult.Items?.[0];
+    if (!jobSaved) {
+      return error(404, { error: 'Job not found' });
+    }
+
+    const allTasks = jobSaved.properties.tasks;
+
+    // 2. Job-level status from GSI1 events
     const jobEventsResult = await ddbClient.send(new QueryCommand({
       TableName: config.TABLE_NAME,
       IndexName: 'GSI1-index',
@@ -33,20 +53,6 @@ export async function handler(event) {
     }));
 
     const jobEvents = jobEventsResult.Items || [];
-    if (jobEvents.length === 0) {
-      return error(404, { error: 'Job not found' });
-    }
-
-    // 2. Build full task list from Job Created + Job Tasks Added
-    const jobCreated = jobEvents.find(e => e.eventType === 'Job Created');
-    const tasksAdded = jobEvents.filter(e => e.eventType === 'Job Tasks Added');
-
-    let allTasks = [...jobCreated.properties.tasks];
-    for (const addedEvent of tasksAdded) {
-      allTasks = [...allTasks, ...addedEvent.properties.newTasks];
-    }
-
-    // 3. Job-level status
     const jobCompleted = jobEvents.find(e => e.eventType === 'Job Completed');
     const jobFailure = jobEvents.find(e => e.eventType === 'Job Failure Detected');
 
@@ -54,7 +60,7 @@ export async function handler(event) {
     if (jobCompleted) jobStatus = 'completed';
     else if (jobFailure) jobStatus = 'partial_failure';
 
-    // 4. Per-task status
+    // 3. Per-task status
     const tasks = await Promise.all(allTasks.map(async task => {
       const latestResult = await ddbClient.send(new QueryCommand({
         TableName: config.TABLE_NAME,
@@ -71,6 +77,10 @@ export async function handler(event) {
       return {
         taskId: task.taskId,
         name: task.name,
+        description: task.description,
+        tag: task.tag,
+        requiresReview: task.requiresReview || false,
+        repo: task.repo || null,
         dependsOn: task.dependsOn,
         status: state || 'waiting',
         lastEventType: latestEvent?.eventType || null,
@@ -78,7 +88,7 @@ export async function handler(event) {
       };
     }));
 
-    // 5. Progress summary
+    // 4. Progress summary
     const statusCounts = { waiting: 0, pending: 0, processing: 0, in_review: 0, completed: 0, failed: 0 };
     for (const task of tasks) {
       statusCounts[task.status] = (statusCounts[task.status] || 0) + 1;
@@ -89,7 +99,7 @@ export async function handler(event) {
       status: jobStatus,
       totalTasks: allTasks.length,
       progress: statusCounts,
-      createdAt: jobCreated.timestamp,
+      createdAt: jobSaved.timestamp,
       completedAt: jobCompleted?.timestamp || null,
       tasks,
     });

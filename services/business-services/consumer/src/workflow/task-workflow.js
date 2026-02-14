@@ -1,5 +1,3 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { writeFile, mkdir, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -9,11 +7,9 @@ import { executeStep } from './agent-workflow.js';
 import { WorkflowLogger } from './workflow-logger.js';
 import { buildExecutionSummary } from './summary-builder.js';
 
-const ddbClient = DynamoDBDocumentClient.from(new DynamoDBClient(getAwsConfig()));
 const s3Client = new S3Client(getAwsConfig());
 
 const S3_BUCKET = process.env.S3_BUCKET;
-const TASK_DEFINITIONS_TABLE = process.env.TASK_DEFINITIONS_TABLE;
 const DELETE_FILES_AFTER_UPLOAD = process.env.DELETE_FILES_AFTER_UPLOAD === 'true';
 
 async function main() {
@@ -32,18 +28,23 @@ async function main() {
   try {
     logger.info(`Starting task workflow for ${requestId}`);
 
-    // 1. Load task definition
+    // 1. Read task definition fields from inputData (passed via SQS message)
     const taskName = inputData.name;
     if (!taskName) {
       throw new Error(`No task name in input data`);
     }
 
-    const taskDef = await getTaskDefinition(taskName);
-    logger.info(`Loaded task definition: ${taskName} (tag: ${taskDef.tag})`);
+    const tag = inputData.tag;
+    const description = inputData.description;
+    if (!tag || !description) {
+      throw new Error(`Missing tag or description in input data for task "${taskName}"`);
+    }
+
+    logger.info(`Task: ${taskName} (tag: ${tag})`);
 
     // 2. Build prompt
     const prompt = buildPrompt({
-      taskDefinition: taskDef,
+      taskDefinition: { tag, description },
       input: inputData.input || {},
       dependencyOutputs: inputData.dependencyOutputs || {},
       iteration: inputData.iteration || 1,
@@ -106,19 +107,6 @@ async function main() {
 
     process.exit(1);
   }
-}
-
-async function getTaskDefinition(name) {
-  const result = await ddbClient.send(new GetCommand({
-    TableName: TASK_DEFINITIONS_TABLE,
-    Key: { name },
-  }));
-
-  if (!result.Item) {
-    throw new Error(`Unknown task type: "${name}" — not found in task registry`);
-  }
-
-  return result.Item;
 }
 
 async function uploadToS3(requestId, outputDir) {

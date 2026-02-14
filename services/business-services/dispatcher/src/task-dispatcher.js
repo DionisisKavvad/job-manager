@@ -1,9 +1,9 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { buildEvent } from './utils/event-builder.js';
 import {
+  getLatestJobSaved,
   getAllJobEvents,
   getLatestTaskEvent,
   getJobFailureDetectedEvent,
@@ -25,7 +25,6 @@ const EVENT_TO_STATE = {
 };
 
 const ddbClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
-const sqsClient = new SQSClient({});
 const ebClient = new EventBridgeClient({});
 
 export async function handler(event) {
@@ -35,17 +34,11 @@ export async function handler(event) {
   // Standalone task — no job orchestration needed
   if (!jobId) return;
 
-  // 1. Get job definition (task DAG)
-  const allJobEvents = await getAllJobEvents(ddbClient, jobId);
-  const jobCreated = allJobEvents.find(e => e.eventType === 'Job Created');
-  if (!jobCreated) return;
+  // 1. Get latest Job Saved (full task DAG)
+  const jobSaved = await getLatestJobSaved(ddbClient, jobId);
+  if (!jobSaved) return;
 
-  const tasksAdded = allJobEvents.filter(e => e.eventType === 'Job Tasks Added');
-
-  let taskDag = [...jobCreated.properties.tasks];
-  for (const added of tasksAdded) {
-    taskDag = [...taskDag, ...added.properties.newTasks];
-  }
+  const taskDag = jobSaved.properties.tasks;
 
   // 2. Get current status of all tasks
   const taskStatuses = {};
@@ -90,7 +83,7 @@ export async function handler(event) {
     return task.dependsOn.every(depId => taskStatuses[depId] === 'completed');
   });
 
-  // 5. Enqueue ready tasks to SQS
+  // 5. Emit Task Pending for ready tasks (task-enqueuer forwards to SQS)
   for (const task of readyTasks) {
     // Gather outputs from completed dependencies
     const dependencyOutputs = {};
@@ -101,20 +94,6 @@ export async function handler(event) {
       }
     }
 
-    await sqsClient.send(new SendMessageCommand({
-      QueueUrl: process.env.TASK_QUEUE_URL,
-      MessageBody: JSON.stringify({
-        taskId: task.taskId,
-        jobId,
-        name: task.name,
-        input: task.input || {},
-        dependencyOutputs,
-      }),
-      MessageAttributes: {
-        requestId: { DataType: 'String', StringValue: task.taskId },
-      },
-    }));
-
     const taskPendingEvent = buildEvent('Task Pending', {
       entityId: task.taskId,
       entityType: 'TASK',
@@ -122,7 +101,13 @@ export async function handler(event) {
         requestId: task.taskId,
         jobId,
         name: task.name,
+        description: task.description,
+        tag: task.tag,
+        requiresReview: task.requiresReview || false,
+        repo: task.repo || null,
+        input: task.input || {},
         dependsOn: task.dependsOn,
+        dependencyOutputs,
       },
     });
 

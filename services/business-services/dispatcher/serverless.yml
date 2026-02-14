@@ -5,12 +5,6 @@ build:
 
 custom:
   resources: ${file(../../../config/config.${self:provider.stage}.yml)}
-  imports:
-    queueUrl: !ImportValue job-manager-queue-url-${self:provider.stage}
-    queueArn: !ImportValue job-manager-queue-arn-${self:provider.stage}
-    eventsTableName: !ImportValue job-manager-events-table-name-${self:provider.stage}
-    eventsTableArn: !ImportValue job-manager-events-table-arn-${self:provider.stage}
-    eventBusName: !ImportValue job-manager-event-bus-name-${self:provider.stage}
 
 provider:
   name: aws
@@ -22,9 +16,9 @@ provider:
     Team: job-manager-dispatcher-${self:provider.stage}
   environment:
     ENVIRONMENT: ${self:provider.stage}
-    TASK_QUEUE_URL: ${self:custom.imports.queueUrl}
-    EVENTS_TABLE: ${self:custom.imports.eventsTableName}
-    EVENT_BUS_NAME: ${self:custom.imports.eventBusName}
+    TASK_QUEUE_URL: https://sqs.${self:provider.region}.amazonaws.com/${aws:accountId}/task-queue-${self:provider.stage}
+    EVENTS_TABLE: events-${self:provider.stage}
+    EVENT_BUS_NAME: job-manager-${self:provider.stage}
     TENANT_ID: gbInnovations
     APP_NAME: task-workflow
 
@@ -37,7 +31,7 @@ functions:
     memorySize: 256
     events:
       - eventBridge:
-          eventBus: ${self:custom.imports.eventBusName}
+          eventBus: arn:aws:events:${self:provider.region}:${aws:accountId}:event-bus/job-manager-${self:provider.stage}
           pattern:
             detail-type:
               - "log-event"
@@ -50,11 +44,27 @@ functions:
       - Effect: Allow
         Action: dynamodb:Query
         Resource:
-          - ${self:custom.imports.eventsTableArn}
-          - ${self:custom.imports.eventsTableArn}/index/*
-      - Effect: Allow
-        Action: sqs:SendMessage
-        Resource: ${self:custom.imports.queueArn}
+          - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/events-${self:provider.stage}
+          - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/events-${self:provider.stage}/index/*
       - Effect: Allow
         Action: events:PutEvents
         Resource: "*"
+
+  task-enqueuer:
+    handler: src/task-enqueuer.handler
+    description: Forwards Task Pending events to SQS
+    timeout: 10
+    memorySize: 256
+    events:
+      - eventBridge:
+          eventBus: arn:aws:events:${self:provider.region}:${aws:accountId}:event-bus/job-manager-${self:provider.stage}
+          pattern:
+            detail-type:
+              - "log-event"
+            detail:
+              eventType:
+                - "Task Pending"
+    iamRoleStatements:
+      - Effect: Allow
+        Action: sqs:SendMessage
+        Resource: arn:aws:sqs:${self:provider.region}:${aws:accountId}:task-queue-${self:provider.stage}

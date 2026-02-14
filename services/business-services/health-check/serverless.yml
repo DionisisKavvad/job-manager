@@ -5,10 +5,6 @@ build:
 
 custom:
   resources: ${file(../../../config/config.${self:provider.stage}.yml)}
-  imports:
-    eventsTableName: !ImportValue job-manager-events-table-name-${self:provider.stage}
-    eventsTableArn: !ImportValue job-manager-events-table-arn-${self:provider.stage}
-    eventBusName: !ImportValue job-manager-event-bus-name-${self:provider.stage}
   schedules:
     healthCheck:
       rate:
@@ -28,8 +24,8 @@ provider:
     Team: job-manager-health-check-${self:provider.stage}
   environment:
     ENVIRONMENT: ${self:provider.stage}
-    EVENTS_TABLE: ${self:custom.imports.eventsTableName}
-    EVENT_BUS_NAME: ${self:custom.imports.eventBusName}
+    EVENTS_TABLE: events-${self:provider.stage}
+    EVENT_BUS_NAME: job-manager-${self:provider.stage}
     TENANT_ID: gbInnovations
     APP_NAME: task-workflow
     SLACK_BOT_TOKEN: ${self:custom.resources.slackBotToken}
@@ -50,8 +46,8 @@ functions:
       - Effect: Allow
         Action: dynamodb:Query
         Resource:
-          - ${self:custom.imports.eventsTableArn}
-          - ${self:custom.imports.eventsTableArn}/index/*
+          - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/events-${self:provider.stage}
+          - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/events-${self:provider.stage}/index/*
       - Effect: Allow
         Action: events:PutEvents
         Resource: "*"
@@ -65,5 +61,5 @@ functions:
       - Effect: Allow
         Action: dynamodb:Query
         Resource:
-          - ${self:custom.imports.eventsTableArn}
-          - ${self:custom.imports.eventsTableArn}/index/*
+          - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/events-${self:provider.stage}
+          - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/events-${self:provider.stage}/index/*

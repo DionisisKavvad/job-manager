@@ -2,17 +2,22 @@ import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { config } from './config.js';
 
 export async function getJobDag(ddbClient, jobId) {
-  const jobCreated = await getJobEvent(ddbClient, jobId, 'Job Created');
-  if (!jobCreated) return null;
+  const result = await ddbClient.send(new QueryCommand({
+    TableName: config.TABLE_NAME,
+    IndexName: 'GSI5-index',
+    KeyConditionExpression: 'GSI5PK = :pk AND begins_with(GSI5SK, :sk)',
+    ExpressionAttributeValues: {
+      ':pk': 'EVENT#Job Saved',
+      ':sk': `TENANT#${config.TENANT_ID}#JOB#${jobId}`,
+    },
+    ScanIndexForward: false,
+    Limit: 1,
+  }));
 
-  const allJobEvents = await getAllJobEvents(ddbClient, jobId);
-  const tasksAdded = allJobEvents.filter(e => e.eventType === 'Job Tasks Added');
+  const latest = result.Items?.[0];
+  if (!latest) return null;
 
-  let tasks = [...jobCreated.properties.tasks];
-  for (const added of tasksAdded) {
-    tasks = [...tasks, ...added.properties.newTasks];
-  }
-
+  const tasks = latest.properties.tasks;
   return { jobId, tasks, totalTasks: tasks.length };
 }
 
@@ -37,9 +42,4 @@ export async function getLatestTaskEvent(ddbClient, taskId) {
     Limit: 1,
   }));
   return result.Items?.[0] || null;
-}
-
-async function getJobEvent(ddbClient, jobId, eventType) {
-  const events = await getAllJobEvents(ddbClient, jobId);
-  return events.find(e => e.eventType === eventType) || null;
 }

@@ -26,6 +26,12 @@ export function validateDag(tasks, options = {}) {
     if (!task.name || typeof task.name !== 'string') {
       errors.push(`Task ${task.taskId}: name is required`);
     }
+    if (!task.description || typeof task.description !== 'string') {
+      errors.push(`Task ${task.taskId}: description is required`);
+    }
+    if (!task.tag || typeof task.tag !== 'string') {
+      errors.push(`Task ${task.taskId}: tag is required`);
+    }
   }
 
   if (errors.length > 0) {
