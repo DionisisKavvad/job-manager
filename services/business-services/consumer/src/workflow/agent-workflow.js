@@ -11,7 +11,7 @@ function clampTimeout(timeout) {
   return Math.max(MIN_TIMEOUT, Math.min(timeout, MAX_TIMEOUT));
 }
 
-export async function executeStep(step, outputDir) {
+export async function executeStep(step, outputDir, cwd) {
   const hooksManager = new SdkHooksManager(outputDir);
   await hooksManager.init();
 
@@ -26,8 +26,8 @@ export async function executeStep(step, outputDir) {
         options: {
           model: CLAUDE_MODEL,
           maxTurns: step.maxTurns || 10,
-          permissionMode: 'acceptEdits',
-          cwd: process.cwd(),
+          permissionMode: 'bypassPermissions',
+          cwd: cwd || process.cwd(),
           hooks: hooksManager.getHooksConfig(),
           allowedTools: step.tools || [],
           abortController,

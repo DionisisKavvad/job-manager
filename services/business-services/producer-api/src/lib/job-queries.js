@@ -32,6 +32,21 @@ export async function getAllJobEvents(ddbClient, jobId) {
   return result.Items || [];
 }
 
+export async function getLatestTaskSaved(ddbClient, taskId) {
+  const result = await ddbClient.send(new QueryCommand({
+    TableName: config.TABLE_NAME,
+    IndexName: 'GSI5-index',
+    KeyConditionExpression: 'GSI5PK = :pk AND begins_with(GSI5SK, :sk)',
+    ExpressionAttributeValues: {
+      ':pk': 'EVENT#Task Saved',
+      ':sk': `TENANT#${config.TENANT_ID}#TASK#${taskId}`,
+    },
+    ScanIndexForward: false,
+    Limit: 1,
+  }));
+  return result.Items?.[0] || null;
+}
+
 export async function getLatestTaskEvent(ddbClient, taskId) {
   const result = await ddbClient.send(new QueryCommand({
     TableName: config.TABLE_NAME,
@@ -39,7 +54,8 @@ export async function getLatestTaskEvent(ddbClient, taskId) {
     KeyConditionExpression: 'GSI1PK = :pk',
     ExpressionAttributeValues: { ':pk': `TASK#${taskId}` },
     ScanIndexForward: false,
-    Limit: 1,
+    Limit: 5,
   }));
-  return result.Items?.[0] || null;
+  const items = result.Items || [];
+  return items.find(item => item.eventType !== 'Task Saved') || null;
 }

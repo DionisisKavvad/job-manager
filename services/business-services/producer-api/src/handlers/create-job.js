@@ -25,7 +25,7 @@ export async function handler(event) {
     const tasks = body.tasks;
     const rootTasks = tasks.filter(t => !t.dependsOn || t.dependsOn.length === 0);
 
-    // 2. Direct write "Job Saved" event for strong consistency
+    // 2. Direct write "Job Saved" event (DAG structure only)
     const jobSavedEvent = buildEvent('Job Saved', {
       entityId: jobId,
       entityType: 'JOB',
@@ -34,12 +34,7 @@ export async function handler(event) {
         tasks: tasks.map(t => ({
           taskId: t.taskId,
           name: t.name,
-          description: t.description,
-          tag: t.tag,
-          requiresReview: t.requiresReview || false,
-          repo: t.repo || null,
           dependsOn: t.dependsOn || [],
-          input: t.input || {},
         })),
         totalTasks: tasks.length,
       },
@@ -50,7 +45,37 @@ export async function handler(event) {
       Item: jobSavedEvent,
     }));
 
-    // 3. Emit Task Pending for root tasks (task-enqueuer forwards to SQS)
+    // 3. Emit Task Saved (full snapshot) + Task Pending for root tasks
+    for (const task of tasks) {
+      const taskSavedEvent = buildEvent('Task Saved', {
+        entityId: task.taskId,
+        entityType: 'TASK',
+        properties: {
+          taskId: task.taskId,
+          jobId,
+          name: task.name,
+          description: task.description,
+          tag: task.tag,
+          requiresReview: task.requiresReview || false,
+          repo: task.repo || null,
+          input: task.input || {},
+          dependsOn: task.dependsOn || [],
+          status: 'pending',
+        },
+      });
+
+      await ebClient.send(new PutEventsCommand({
+        Entries: [{
+          EventBusName: config.EVENT_BUS_NAME,
+          Source: `task-workflow.${config.APP_NAME}`,
+          DetailType: 'log-event',
+          Detail: JSON.stringify(taskSavedEvent),
+          Time: new Date(now),
+        }],
+      }));
+    }
+
+    // 4. Emit Task Pending for root tasks (task-enqueuer forwards to SQS)
     for (const task of rootTasks) {
       const taskPendingEvent = buildEvent('Task Pending', {
         entityId: task.taskId,
@@ -59,11 +84,6 @@ export async function handler(event) {
           requestId: task.taskId,
           jobId,
           name: task.name,
-          description: task.description,
-          tag: task.tag,
-          requiresReview: task.requiresReview || false,
-          repo: task.repo || null,
-          input: task.input || {},
           dependsOn: [],
         },
       });

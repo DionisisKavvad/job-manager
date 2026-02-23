@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { getAwsConfig } from '../utils/aws-credentials.js';
 import { buildPrompt } from './prompt-builder.js';
 import { executeStep } from './agent-workflow.js';
+import { prepareRepo } from './repo-manager.js';
 import { WorkflowLogger } from './workflow-logger.js';
 import { buildExecutionSummary } from './summary-builder.js';
 
@@ -54,20 +55,29 @@ async function main() {
 
     logger.info(`Prompt built (${prompt.length} chars)`);
 
-    // 3. Execute via Claude Agent SDK
+    // 3. Prepare repo if specified
+    let repoDir = null;
+    if (inputData.repo) {
+      logger.info(`Preparing repo: ${inputData.repo}`);
+      repoDir = await prepareRepo({ repo: inputData.repo, taskId: requestId });
+      logger.info(`Repo ready at ${repoDir}`);
+    }
+
+    // 4. Execute via Claude Agent SDK
     const result = await executeStep({
       name: taskName,
       constructedPrompt: prompt,
       maxTurns: 10,
       tools: [],
       timeout: parseInt(process.env.DEFAULT_TIMEOUT || '120000', 10),
-    }, outputDir);
+    }, outputDir, repoDir);
 
     logger.info(`Task completed in ${result.durationMs}ms`);
 
     // 4. Save result
+    const output = result.output ?? '';
     const resultPath = join(artifactsDir, 'task-result.json');
-    await writeFile(resultPath, JSON.stringify(result.output, null, 2), 'utf8');
+    await writeFile(resultPath, JSON.stringify(output, null, 2), 'utf8');
 
     // 5. Build and save summary
     const summary = buildExecutionSummary({
@@ -75,7 +85,7 @@ async function main() {
       taskName,
       startTime,
       endTime: Date.now(),
-      result: result.output,
+      result: output,
       usage: result.usage,
     });
 
@@ -88,7 +98,7 @@ async function main() {
     // Write result to stdout for parent process
     console.log(JSON.stringify({
       success: true,
-      output: result.output,
+      output,
       usage: result.usage,
       durationMs: result.durationMs,
       summary,

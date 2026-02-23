@@ -53,7 +53,7 @@ export async function handler(event) {
 
     const combinedTasks = [...existingDag.tasks, ...newTasks];
 
-    // 4. Direct write "Job Saved" with full merged state
+    // 4. Direct write "Job Saved" with DAG structure only
     const jobSavedEvent = buildEvent('Job Saved', {
       entityId: jobId,
       entityType: 'JOB',
@@ -62,12 +62,7 @@ export async function handler(event) {
         tasks: combinedTasks.map(t => ({
           taskId: t.taskId,
           name: t.name,
-          description: t.description,
-          tag: t.tag,
-          requiresReview: t.requiresReview || false,
-          repo: t.repo || null,
           dependsOn: t.dependsOn || [],
-          input: t.input || {},
         })),
         totalTasks: combinedTasks.length,
       },
@@ -78,7 +73,37 @@ export async function handler(event) {
       Item: jobSavedEvent,
     }));
 
-    // 5. Check which new tasks are immediately ready
+    // 5. Emit Task Saved per NEW task (full snapshot)
+    for (const task of newTasks) {
+      const taskSavedEvent = buildEvent('Task Saved', {
+        entityId: task.taskId,
+        entityType: 'TASK',
+        properties: {
+          taskId: task.taskId,
+          jobId,
+          name: task.name,
+          description: task.description,
+          tag: task.tag,
+          requiresReview: task.requiresReview || false,
+          repo: task.repo || null,
+          input: task.input || {},
+          dependsOn: task.dependsOn || [],
+          status: 'pending',
+        },
+      });
+
+      await ebClient.send(new PutEventsCommand({
+        Entries: [{
+          EventBusName: config.EVENT_BUS_NAME,
+          Source: `task-workflow.${config.APP_NAME}`,
+          DetailType: 'log-event',
+          Detail: JSON.stringify(taskSavedEvent),
+          Time: new Date(now),
+        }],
+      }));
+    }
+
+    // 6. Check which new tasks are immediately ready
     const readyTasks = [];
 
     for (const task of newTasks) {
@@ -101,7 +126,7 @@ export async function handler(event) {
       }
     }
 
-    // 6. Emit Task Pending for ready tasks (task-enqueuer forwards to SQS)
+    // 7. Emit Task Pending for ready tasks (task-enqueuer reads Task Saved for details)
     for (const task of readyTasks) {
       const taskPendingEvent = buildEvent('Task Pending', {
         entityId: task.taskId,
@@ -110,11 +135,6 @@ export async function handler(event) {
           requestId: task.taskId,
           jobId,
           name: task.name,
-          description: task.description,
-          tag: task.tag,
-          requiresReview: task.requiresReview || false,
-          repo: task.repo || null,
-          input: task.input || {},
           dependsOn: task.dependsOn || [],
         },
       });

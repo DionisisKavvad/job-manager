@@ -6,6 +6,7 @@ import {
   getLatestJobSaved,
   getAllJobEvents,
   getLatestTaskEvent,
+  getLatestTaskSaved,
   getJobFailureDetectedEvent,
   getTaskOutputEvent,
 } from './utils/dag-queries.js';
@@ -83,7 +84,7 @@ export async function handler(event) {
     return task.dependsOn.every(depId => taskStatuses[depId] === 'completed');
   });
 
-  // 5. Emit Task Pending for ready tasks (task-enqueuer forwards to SQS)
+  // 5. Emit Task Saved (with dependencyOutputs) + slim Task Pending for ready tasks
   for (const task of readyTasks) {
     // Gather outputs from completed dependencies
     const dependencyOutputs = {};
@@ -94,6 +95,31 @@ export async function handler(event) {
       }
     }
 
+    // Query previous Task Saved and merge with dependencyOutputs
+    const previousTaskSaved = await getLatestTaskSaved(ddbClient, task.taskId);
+    const previousProps = previousTaskSaved?.properties || {};
+
+    const taskSavedEvent = buildEvent('Task Saved', {
+      entityId: task.taskId,
+      entityType: 'TASK',
+      properties: {
+        ...previousProps,
+        dependencyOutputs,
+        status: 'pending',
+      },
+    });
+
+    await ebClient.send(new PutEventsCommand({
+      Entries: [{
+        EventBusName: process.env.EVENT_BUS_NAME,
+        Source: `task-workflow.${process.env.APP_NAME}`,
+        DetailType: 'log-event',
+        Detail: JSON.stringify(taskSavedEvent),
+        Time: new Date(),
+      }],
+    }));
+
+    // Slim Task Pending — task-enqueuer reads Task Saved for full config
     const taskPendingEvent = buildEvent('Task Pending', {
       entityId: task.taskId,
       entityType: 'TASK',
@@ -101,13 +127,7 @@ export async function handler(event) {
         requestId: task.taskId,
         jobId,
         name: task.name,
-        description: task.description,
-        tag: task.tag,
-        requiresReview: task.requiresReview || false,
-        repo: task.repo || null,
-        input: task.input || {},
         dependsOn: task.dependsOn,
-        dependencyOutputs,
       },
     });
 

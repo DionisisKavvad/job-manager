@@ -57,6 +57,7 @@ const ENV_ALLOWLIST = [
   'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION',
   'S3_BUCKET', 'DELETE_FILES_AFTER_UPLOAD',
   'EVENTBRIDGE_BUS_NAME', 'TENANT_ID', 'APP_NAME',
+  'GITHUB_TOKEN',
 ];
 
 let running = true;
@@ -85,6 +86,23 @@ async function getLatestTaskEvent(requestId) {
     IndexName: 'GSI1-index',
     KeyConditionExpression: 'GSI1PK = :pk',
     ExpressionAttributeValues: { ':pk': `TASK#${requestId}` },
+    ScanIndexForward: false,
+    Limit: 5,
+  }));
+  const items = result.Items || [];
+  return items.find(item => item.eventType !== 'Task Saved') || null;
+}
+
+async function getLatestTaskSaved(taskId) {
+  const TENANT_ID = process.env.TENANT_ID || 'gbInnovations';
+  const result = await ddbClient.send(new QueryCommand({
+    TableName: TABLE_NAME,
+    IndexName: 'GSI5-index',
+    KeyConditionExpression: 'GSI5PK = :pk AND begins_with(GSI5SK, :sk)',
+    ExpressionAttributeValues: {
+      ':pk': 'EVENT#Task Saved',
+      ':sk': `TENANT#${TENANT_ID}#TASK#${taskId}`,
+    },
     ScanIndexForward: false,
     Limit: 1,
   }));
@@ -322,6 +340,23 @@ async function processMessage(message) {
         },
         context: { workerId },
       });
+
+      // Emit Task Saved with accumulated snapshot
+      const prevSaved = await getLatestTaskSaved(requestId);
+      const prevProps = prevSaved?.properties || {};
+      await emitEvent('Task Saved', {
+        entityId: requestId,
+        entityType: 'TASK',
+        properties: {
+          ...prevProps,
+          output,
+          summary: typeof output === 'object' ? JSON.stringify(output).substring(0, 200) : String(output).substring(0, 200),
+          durationMs,
+          usage,
+          status: 'in_review',
+        },
+        context: { workerId },
+      });
     } else {
       await emitEvent('Task Completed', {
         entityId: requestId,
@@ -334,6 +369,22 @@ async function processMessage(message) {
           durationMs,
           exitCode: 0,
           usage,
+        },
+        context: { workerId },
+      });
+
+      // Emit Task Saved with accumulated snapshot
+      const prevSaved = await getLatestTaskSaved(requestId);
+      const prevProps = prevSaved?.properties || {};
+      await emitEvent('Task Saved', {
+        entityId: requestId,
+        entityType: 'TASK',
+        properties: {
+          ...prevProps,
+          output,
+          durationMs,
+          usage,
+          status: 'completed',
         },
         context: { workerId },
       });

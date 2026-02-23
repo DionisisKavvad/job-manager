@@ -37,7 +37,6 @@ functions:
               - "log-event"
             detail:
               eventType:
-                - "Task Completed"
                 - "Task Approved"
                 - "Task Failed"
     iamRoleStatements:
@@ -50,10 +49,29 @@ functions:
         Action: events:PutEvents
         Resource: "*"
 
+  review-notifier:
+    handler: src/review-notifier.handler
+    description: Sends review notification when task is submitted for review
+    timeout: 10
+    memorySize: 256
+    events:
+      - eventBridge:
+          eventBus: arn:aws:events:${self:provider.region}:${aws:accountId}:event-bus/job-manager-${self:provider.stage}
+          pattern:
+            detail-type:
+              - "log-event"
+            detail:
+              eventType:
+                - "Task Submitted For Review"
+    iamRoleStatements:
+      - Effect: Allow
+        Action: sqs:SendMessage
+        Resource: arn:aws:sqs:${self:provider.region}:${aws:accountId}:task-queue-${self:provider.stage}
+
   task-enqueuer:
     handler: src/task-enqueuer.handler
-    description: Forwards Task Pending events to SQS
-    timeout: 10
+    description: Reads Task Saved from DynamoDB and forwards to SQS
+    timeout: 15
     memorySize: 256
     events:
       - eventBridge:
@@ -68,3 +86,8 @@ functions:
       - Effect: Allow
         Action: sqs:SendMessage
         Resource: arn:aws:sqs:${self:provider.region}:${aws:accountId}:task-queue-${self:provider.stage}
+      - Effect: Allow
+        Action: dynamodb:Query
+        Resource:
+          - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/events-${self:provider.stage}
+          - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/events-${self:provider.stage}/index/*
