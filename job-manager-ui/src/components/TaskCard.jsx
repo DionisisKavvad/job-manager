@@ -1,13 +1,19 @@
-import { TAG_COLORS } from "../utils/task-states";
+import { getTagColor } from "../utils/task-states";
 
-export default function TaskCard({ task }) {
-  const tagClass = TAG_COLORS[task.tag] || "bg-gray-100 text-gray-700";
+export default function TaskCard({ task, onClick }) {
+  const tagClass = getTagColor(task.tag);
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
-      <p className="font-medium text-sm text-gray-900">{task.taskId}</p>
-      {task.jobName && (
-        <p className="text-xs text-gray-400 truncate">{task.jobName}</p>
+    <div
+      onClick={() => onClick?.(task.taskId)}
+      className={`bg-white rounded-lg border border-gray-200 p-3 shadow-sm transition-shadow ${
+        onClick ? "cursor-pointer hover:shadow-md hover:border-gray-300" : ""
+      }`}
+    >
+      <p className="font-medium text-sm text-gray-900">{task.name || task.taskId}</p>
+
+      {task.description && (
+        <p className="mt-1 text-xs text-gray-500 line-clamp-2">{task.description}</p>
       )}
 
       <div className="mt-2 flex flex-wrap gap-1.5">
@@ -33,7 +39,7 @@ export default function TaskCard({ task }) {
         </p>
       )}
 
-      {task.dependsOn.length > 0 && (
+      {task.dependsOn?.length > 0 && (
         <p className="mt-1 text-xs text-gray-400">
           depends: {task.dependsOn.join(", ")}
         </p>

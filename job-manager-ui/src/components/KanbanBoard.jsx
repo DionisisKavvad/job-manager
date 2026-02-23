@@ -1,7 +1,7 @@
 import { COLUMNS, groupTasksByState } from "../utils/task-states";
 import KanbanColumn from "./KanbanColumn";
 
-export default function KanbanBoard({ tasks }) {
+export default function KanbanBoard({ tasks, onTaskClick }) {
   const grouped = groupTasksByState(tasks);
 
   return (
@@ -15,6 +15,7 @@ export default function KanbanBoard({ tasks }) {
             key={column.key}
             column={column}
             tasks={grouped[column.key]}
+            onTaskClick={onTaskClick}
           />
         );
       })}

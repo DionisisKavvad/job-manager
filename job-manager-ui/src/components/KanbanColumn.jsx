@@ -1,6 +1,6 @@
 import TaskCard from "./TaskCard";
 
-export default function KanbanColumn({ column, tasks }) {
+export default function KanbanColumn({ column, tasks, onTaskClick }) {
   return (
     <div className="flex flex-col min-w-[220px] w-[260px]">
       <div
@@ -19,7 +19,7 @@ export default function KanbanColumn({ column, tasks }) {
 
       <div className="flex-1 bg-gray-50 rounded-b-lg border border-t-0 border-gray-200 p-2 space-y-2 min-h-[400px]">
         {tasks.map((task) => (
-          <TaskCard key={task.taskId} task={task} />
+          <TaskCard key={task.taskId} task={task} onClick={onTaskClick} />
         ))}
         {tasks.length === 0 && (
           <p className="text-xs text-gray-400 text-center mt-6">No tasks</p>
