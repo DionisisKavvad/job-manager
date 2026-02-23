@@ -58,6 +58,7 @@ const ENV_ALLOWLIST = [
   'S3_BUCKET', 'DELETE_FILES_AFTER_UPLOAD',
   'EVENTBRIDGE_BUS_NAME', 'TENANT_ID', 'APP_NAME',
   'GITHUB_TOKEN',
+  'WORKTREES_BASE',
 ];
 
 let running = true;
@@ -314,11 +315,13 @@ async function processMessage(message) {
     let usage = {};
     let durationMs = Date.now() - startTime;
 
+    let feedbackResult = null;
     try {
       const parsed = JSON.parse(result.stdout.trim().split('\n').pop());
       output = parsed.output || {};
       usage = parsed.usage || {};
       durationMs = parsed.durationMs || durationMs;
+      feedbackResult = parsed.feedbackResult || null;
     } catch {}
 
     // Check requiresReview from SQS message body
@@ -337,6 +340,7 @@ async function processMessage(message) {
           ...(body.repo && { repo: body.repo }),
           durationMs,
           usage,
+          ...(feedbackResult && { feedbackResult }),
         },
         context: { workerId },
       });
@@ -369,6 +373,7 @@ async function processMessage(message) {
           durationMs,
           exitCode: 0,
           usage,
+          ...(feedbackResult && { feedbackResult }),
         },
         context: { workerId },
       });

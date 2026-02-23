@@ -37,6 +37,9 @@ export async function handler(event) {
       repo: taskProps.repo || null,
       input: taskProps.input || {},
       dependencyOutputs: taskProps.dependencyOutputs || {},
+      allowedTools: taskProps.allowedTools || null,
+      maxTurns: taskProps.maxTurns || null,
+      feedbackCommands: taskProps.feedbackCommands || null,
     }),
     MessageAttributes: {
       requestId: { DataType: 'String', StringValue: taskId },

@@ -1,6 +1,6 @@
 import { sanitizePromptInput } from '../security/index.js';
 
-export function buildPrompt({ taskDefinition, input, dependencyOutputs, iteration, previousOutput, reviewFeedback }) {
+export function buildPrompt({ taskDefinition, input, dependencyOutputs, iteration, previousOutput, reviewFeedback, feedbackCommands }) {
   const sections = [
     `# Role\nYou are a ${taskDefinition.tag}.`,
     `# Task\n${taskDefinition.description}`,
@@ -24,6 +24,13 @@ export function buildPrompt({ taskDefinition, input, dependencyOutputs, iteratio
   if (reviewFeedback) {
     const sanitizedFeedback = sanitizePromptInput(reviewFeedback);
     sections.push(`# Reviewer Feedback\nThe reviewer requested the following changes:\n${sanitizedFeedback}`);
+  }
+
+  if (feedbackCommands && Object.keys(feedbackCommands).length > 0) {
+    const commandLines = Object.entries(feedbackCommands)
+      .map(([key, cmd]) => `- ${key}: \`${cmd}\``)
+      .join('\n');
+    sections.push(`# Validation\nAfter you finish, the following commands will be run:\n${commandLines}\nPlease ensure your changes pass these checks.`);
   }
 
   return sections.join('\n\n');

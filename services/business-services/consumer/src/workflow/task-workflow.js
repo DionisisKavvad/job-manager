@@ -4,9 +4,12 @@ import { join } from 'node:path';
 import { getAwsConfig } from '../utils/aws-credentials.js';
 import { buildPrompt } from './prompt-builder.js';
 import { executeStep } from './agent-workflow.js';
-import { prepareRepo } from './repo-manager.js';
+import { prepareRepo, cleanupWorktree } from './repo-manager.js';
 import { WorkflowLogger } from './workflow-logger.js';
 import { buildExecutionSummary } from './summary-builder.js';
+import { runFeedbackLoop } from './feedback-loop.js';
+
+const DEFAULT_TOOLS = ['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep'];
 
 const s3Client = new S3Client(getAwsConfig());
 
@@ -44,6 +47,7 @@ async function main() {
     logger.info(`Task: ${taskName} (tag: ${tag})`);
 
     // 2. Build prompt
+    const feedbackCommands = inputData.feedbackCommands || null;
     const prompt = buildPrompt({
       taskDefinition: { tag, description },
       input: inputData.input || {},
@@ -51,6 +55,7 @@ async function main() {
       iteration: inputData.iteration || 1,
       previousOutput: inputData.previousOutput || null,
       reviewFeedback: inputData.reviewFeedback || null,
+      feedbackCommands,
     });
 
     logger.info(`Prompt built (${prompt.length} chars)`);
@@ -67,14 +72,34 @@ async function main() {
     const result = await executeStep({
       name: taskName,
       constructedPrompt: prompt,
-      maxTurns: 10,
-      tools: [],
+      maxTurns: inputData.maxTurns || 20,
+      tools: inputData.allowedTools || DEFAULT_TOOLS,
       timeout: parseInt(process.env.DEFAULT_TIMEOUT || '120000', 10),
     }, outputDir, repoDir);
 
     logger.info(`Task completed in ${result.durationMs}ms`);
 
-    // 4. Save result
+    // 4a. Run feedback loop if configured
+    let feedbackResult = null;
+    if (repoDir && feedbackCommands) {
+      logger.info('Running feedback loop');
+      feedbackResult = await runFeedbackLoop({
+        feedbackCommands,
+        repoDir,
+        originalStep: {
+          name: taskName,
+          constructedPrompt: prompt,
+          maxTurns: inputData.maxTurns || 20,
+          tools: inputData.allowedTools || DEFAULT_TOOLS,
+          timeout: parseInt(process.env.DEFAULT_TIMEOUT || '120000', 10),
+        },
+        outputDir,
+        logger,
+      });
+      logger.info(`Feedback loop: passed=${feedbackResult.passed}, rounds=${feedbackResult.rounds}`);
+    }
+
+    // 4b. Save result
     const output = result.output ?? '';
     const resultPath = join(artifactsDir, 'task-result.json');
     await writeFile(resultPath, JSON.stringify(output, null, 2), 'utf8');
@@ -92,6 +117,13 @@ async function main() {
     // 6. Upload to S3
     await uploadToS3(requestId, outputDir);
 
+    // 7. Cleanup worktree
+    if (inputData.repo) {
+      await cleanupWorktree({ taskId: requestId }).catch(err =>
+        logger.warn(`Worktree cleanup failed: ${err.message}`)
+      );
+    }
+
     logger.info('Upload complete');
     await logger.flush();
 
@@ -102,6 +134,7 @@ async function main() {
       usage: result.usage,
       durationMs: result.durationMs,
       summary,
+      ...(feedbackResult && { feedbackResult }),
     }));
 
     process.exit(0);

@@ -60,6 +60,9 @@ export async function handler(event) {
           repo: task.repo || null,
           input: task.input || {},
           dependsOn: task.dependsOn || [],
+          allowedTools: task.allowedTools || null,
+          maxTurns: task.maxTurns || null,
+          feedbackCommands: task.feedbackCommands || null,
           status: 'pending',
         },
       });

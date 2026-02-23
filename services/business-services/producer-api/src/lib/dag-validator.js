@@ -32,6 +32,37 @@ export function validateDag(tasks, options = {}) {
     if (!task.tag || typeof task.tag !== 'string') {
       errors.push(`Task ${task.taskId}: tag is required`);
     }
+
+    // Optional: allowedTools — array of non-empty strings
+    if (task.allowedTools !== undefined && task.allowedTools !== null) {
+      if (!Array.isArray(task.allowedTools) || task.allowedTools.some(t => typeof t !== 'string' || t.length === 0)) {
+        errors.push(`Task ${task.taskId}: allowedTools must be an array of non-empty strings`);
+      }
+    }
+
+    // Optional: maxTurns — integer between 1 and 200
+    if (task.maxTurns !== undefined && task.maxTurns !== null) {
+      if (!Number.isInteger(task.maxTurns) || task.maxTurns < 1 || task.maxTurns > 200) {
+        errors.push(`Task ${task.taskId}: maxTurns must be an integer between 1 and 200`);
+      }
+    }
+
+    // Optional: feedbackCommands — object with keys from ['lint', 'typecheck', 'test'], values are non-empty strings
+    if (task.feedbackCommands !== undefined && task.feedbackCommands !== null) {
+      const allowedKeys = new Set(['lint', 'typecheck', 'test']);
+      if (typeof task.feedbackCommands !== 'object' || Array.isArray(task.feedbackCommands)) {
+        errors.push(`Task ${task.taskId}: feedbackCommands must be an object`);
+      } else {
+        for (const [key, value] of Object.entries(task.feedbackCommands)) {
+          if (!allowedKeys.has(key)) {
+            errors.push(`Task ${task.taskId}: feedbackCommands key "${key}" is not allowed (use: lint, typecheck, test)`);
+          }
+          if (typeof value !== 'string' || value.length === 0) {
+            errors.push(`Task ${task.taskId}: feedbackCommands.${key} must be a non-empty string`);
+          }
+        }
+      }
+    }
   }
 
   if (errors.length > 0) {
