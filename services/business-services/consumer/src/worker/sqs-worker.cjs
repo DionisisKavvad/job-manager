@@ -120,6 +120,10 @@ async function checkIdempotency(requestId) {
     return { proceed: false, reason: 'terminal', state };
   }
 
+  if (state === 'in_review') {
+    return { proceed: false, reason: 'awaiting-review', state };
+  }
+
   if (state === 'processing') {
     const effectiveUntil = latestEvent.properties?.effectiveUntil;
     if (effectiveUntil && Date.now() < effectiveUntil * 1000) {

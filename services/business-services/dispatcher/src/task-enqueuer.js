@@ -40,6 +40,9 @@ export async function handler(event) {
       allowedTools: taskProps.allowedTools || null,
       maxTurns: taskProps.maxTurns || null,
       feedbackCommands: taskProps.feedbackCommands || null,
+      iteration: taskProps.iteration || 1,
+      reviewFeedback: taskProps.reviewFeedback || null,
+      previousOutput: taskProps.previousOutput || null,
     }),
     MessageAttributes: {
       requestId: { DataType: 'String', StringValue: taskId },

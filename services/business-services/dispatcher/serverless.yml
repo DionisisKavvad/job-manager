@@ -52,7 +52,7 @@ functions:
 
   review-notifier:
     handler: src/review-notifier.handler
-    description: Sends review notification when task is submitted for review
+    description: Logs review notification when task is submitted for review
     timeout: 10
     memorySize: 256
     events:
@@ -64,10 +64,6 @@ functions:
             detail:
               eventType:
                 - "Task Submitted For Review"
-    iamRoleStatements:
-      - Effect: Allow
-        Action: sqs:SendMessage
-        Resource: arn:aws:sqs:${self:provider.region}:${aws:accountId}:task-queue-${self:provider.stage}
 
   task-enqueuer:
     handler: src/task-enqueuer.handler

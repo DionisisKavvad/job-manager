@@ -110,3 +110,62 @@ functions:
         Resource:
           - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/events-${self:provider.stage}
           - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/events-${self:provider.stage}/index/*
+
+  get-task-events:
+    handler: src/handlers/get-task-events.handler
+    description: Gets chronological event timeline for a task
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: /jobs/{jobId}/tasks/{taskId}/events
+          method: get
+          private: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:Query
+        Resource:
+          - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/events-${self:provider.stage}
+          - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/events-${self:provider.stage}/index/*
+
+  approve-task:
+    handler: src/handlers/approve-task.handler
+    description: Approves a task that is in review
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: /jobs/{jobId}/tasks/{taskId}/approve
+          method: post
+          private: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:Query
+        Resource:
+          - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/events-${self:provider.stage}
+          - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/events-${self:provider.stage}/index/*
+      - Effect: Allow
+        Action: events:PutEvents
+        Resource: "*"
+
+  request-revision:
+    handler: src/handlers/request-revision.handler
+    description: Requests revision for a task in review
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: /jobs/{jobId}/tasks/{taskId}/request-revision
+          method: post
+          private: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:Query
+        Resource:
+          - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/events-${self:provider.stage}
+          - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/events-${self:provider.stage}/index/*
+      - Effect: Allow
+        Action: events:PutEvents
+        Resource: "*"

@@ -4,6 +4,7 @@ import ResultTab from './tabs/ResultTab';
 import FeedbackTab from './tabs/FeedbackTab';
 import ExecutionTab from './tabs/ExecutionTab';
 import EventsTimelineTab from './tabs/EventsTimelineTab';
+import { useTaskEvents } from '../hooks/useTaskEvents';
 
 const ALL_TABS = [
   { key: 'dependencies', label: 'Dependencies' },
@@ -13,7 +14,10 @@ const ALL_TABS = [
   { key: 'events', label: 'Events' },
 ];
 
-export default function TaskDetailTabs({ task, allTasks }) {
+export default function TaskDetailTabs({ task, allTasks, jobId }) {
+  const { data: eventsData } = useTaskEvents(jobId, task?.taskId);
+  const events = eventsData?.events || [];
+
   // Filter tabs: only show feedback if task has review
   const tabs = ALL_TABS.filter((tab) => {
     if (tab.key === 'feedback' && !task.requiresReview) return false;
@@ -48,9 +52,9 @@ export default function TaskDetailTabs({ task, allTasks }) {
       <div className="flex-1 overflow-y-auto p-4">
         {currentTab === 'dependencies' && <DependenciesTab task={task} allTasks={allTasks} />}
         {currentTab === 'result' && <ResultTab task={task} />}
-        {currentTab === 'feedback' && <FeedbackTab task={task} />}
+        {currentTab === 'feedback' && <FeedbackTab task={task} events={events} />}
         {currentTab === 'execution' && <ExecutionTab task={task} />}
-        {currentTab === 'events' && <EventsTimelineTab task={task} />}
+        {currentTab === 'events' && <EventsTimelineTab task={task} events={events} />}
       </div>
     </div>
   );

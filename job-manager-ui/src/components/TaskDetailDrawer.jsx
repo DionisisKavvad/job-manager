@@ -1,11 +1,98 @@
+import { useState } from "react";
 import { useAppContext } from "../context/AppContext";
 import { useJobDetail } from "../hooks/useJobDetail";
 import { STATUS_NODE_COLORS, getTagColor } from "../utils/task-states";
+import { approveTask, requestRevision } from "../api/jobs";
 import TaskDetailTabs from "./TaskDetailTabs";
+
+const HAS_API = !!import.meta.env.VITE_API_URL;
 
 function formatTimestamp(ts) {
   if (!ts) return "—";
   return new Date(ts).toLocaleString();
+}
+
+function ReviewActions({ jobId, task }) {
+  const [loading, setLoading] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  const [result, setResult] = useState(null);
+
+  if (!HAS_API) return null;
+  if (task.status !== "in_review" || !task.requiresReview) return null;
+
+  async function handleApprove() {
+    setLoading(true);
+    setResult(null);
+    try {
+      await approveTask(jobId, task.taskId);
+      setResult({ type: "success", message: "Task approved" });
+    } catch (err) {
+      setResult({ type: "error", message: err.message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRevision() {
+    if (!feedback.trim()) return;
+    setLoading(true);
+    setResult(null);
+    try {
+      const res = await requestRevision(jobId, task.taskId, feedback.trim());
+      setResult({ type: "success", message: `Revision requested (iteration ${res.iteration})` });
+      setShowFeedback(false);
+      setFeedback("");
+    } catch (err) {
+      setResult({ type: "error", message: err.message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="px-4 py-2 border-b border-gray-200 flex-shrink-0">
+      <div className="flex gap-2">
+        <button
+          onClick={handleApprove}
+          disabled={loading}
+          className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded disabled:opacity-50 cursor-pointer"
+        >
+          {loading ? "..." : "Approve"}
+        </button>
+        <button
+          onClick={() => setShowFeedback(!showFeedback)}
+          disabled={loading}
+          className="px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-100 hover:bg-amber-200 rounded disabled:opacity-50 cursor-pointer"
+        >
+          Request Revision
+        </button>
+      </div>
+      {showFeedback && (
+        <div className="mt-2">
+          <textarea
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+            placeholder="Describe what needs to be changed..."
+            maxLength={5000}
+            className="w-full text-xs border border-gray-300 rounded p-2 h-20 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <button
+            onClick={handleRevision}
+            disabled={loading || !feedback.trim()}
+            className="mt-1 px-3 py-1.5 text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 rounded disabled:opacity-50 cursor-pointer"
+          >
+            Submit Feedback
+          </button>
+        </div>
+      )}
+      {result && (
+        <p className={`mt-1 text-xs ${result.type === "success" ? "text-green-600" : "text-red-600"}`}>
+          {result.message}
+        </p>
+      )}
+    </div>
+  );
 }
 
 export default function TaskDetailDrawer() {
@@ -92,8 +179,11 @@ export default function TaskDetailDrawer() {
         </div>
       </div>
 
+      {/* Review Actions */}
+      <ReviewActions jobId={selectedJobId} task={task} />
+
       {/* Tabs */}
-      <TaskDetailTabs task={task} allTasks={allTasks} />
+      <TaskDetailTabs task={task} allTasks={allTasks} jobId={selectedJobId} />
     </div>
   );
 }

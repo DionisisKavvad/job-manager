@@ -2,20 +2,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { success, error } from '../lib/response.js';
 import { config } from '../lib/config.js';
-
-const EVENT_TO_STATE = {
-  'Task Pending': 'pending',
-  'Task Processing Started': 'processing',
-  'Task Processing Failed': 'processing',
-  'Task Updated': 'processing',
-  'Task Completed': 'completed',
-  'Task Submitted For Review': 'in_review',
-  'Task Revision Requested': 'pending',
-  'Task Approved': 'completed',
-  'Task Failed': 'failed',
-  'Task Timeout': 'failed',
-  'Task Heartbeat': 'processing',
-};
+import { EVENT_TO_STATE, getLatestTaskSaved } from '../lib/job-queries.js';
 
 const ddbClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
@@ -60,19 +47,23 @@ export async function handler(event) {
     if (jobCompleted) jobStatus = 'completed';
     else if (jobFailure) jobStatus = 'partial_failure';
 
-    // 3. Per-task status
+    // 3. Per-task status + enriched data from Task Saved
     const tasks = await Promise.all(allTasks.map(async task => {
-      const latestResult = await ddbClient.send(new QueryCommand({
-        TableName: config.TABLE_NAME,
-        IndexName: 'GSI1-index',
-        KeyConditionExpression: 'GSI1PK = :pk',
-        ExpressionAttributeValues: { ':pk': `TASK#${task.taskId}` },
-        ScanIndexForward: false,
-        Limit: 1,
-      }));
+      const [latestResult, taskSaved] = await Promise.all([
+        ddbClient.send(new QueryCommand({
+          TableName: config.TABLE_NAME,
+          IndexName: 'GSI1-index',
+          KeyConditionExpression: 'GSI1PK = :pk',
+          ExpressionAttributeValues: { ':pk': `TASK#${task.taskId}` },
+          ScanIndexForward: false,
+          Limit: 1,
+        })),
+        getLatestTaskSaved(ddbClient, task.taskId),
+      ]);
 
       const latestEvent = latestResult.Items?.[0];
       const state = latestEvent ? EVENT_TO_STATE[latestEvent.eventType] : null;
+      const savedProps = taskSaved?.properties || {};
 
       return {
         taskId: task.taskId,
@@ -85,6 +76,12 @@ export async function handler(event) {
         status: state || 'waiting',
         lastEventType: latestEvent?.eventType || null,
         lastEventAt: latestEvent?.timestamp || null,
+        iteration: savedProps.iteration || 1,
+        output: savedProps.output || null,
+        summary: savedProps.summary || null,
+        durationMs: savedProps.durationMs || null,
+        usage: savedProps.usage || null,
+        feedbackResult: savedProps.feedbackResult || null,
       };
     }));
 
