@@ -4,7 +4,7 @@ import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { validateDag } from '../lib/dag-validator.js';
 import { getJobDag, getAllJobEvents, getLatestTaskEvent } from '../lib/job-queries.js';
 import { buildEvent } from '../lib/event-builder.js';
-import { success, error } from '../lib/response.js';
+import { success, error, parseBody } from '../lib/response.js';
 import { config } from '../lib/config.js';
 
 const EVENT_TO_STATE = {
@@ -27,7 +27,7 @@ const ddbClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 export async function handler(event) {
   try {
     const jobId = event.pathParameters.jobId;
-    const body = JSON.parse(event.body);
+    const body = parseBody(event);
     const newTasks = body.tasks;
     const now = Date.now();
 
@@ -119,7 +119,7 @@ export async function handler(event) {
       const allDepsCompleted = await Promise.all(
         deps.map(async depId => {
           if (newTasks.some(t => t.taskId === depId)) return false;
-          const latestEvent = await getLatestTaskEvent(ddbClient, depId);
+          const latestEvent = await getLatestTaskEvent(ddbClient, depId, jobId);
           return latestEvent && EVENT_TO_STATE[latestEvent.eventType] === 'completed';
         })
       );

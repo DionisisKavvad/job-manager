@@ -23,7 +23,7 @@ export async function handler(event) {
     }
 
     // Validate task is in_review
-    const latestEvent = await getLatestTaskEvent(ddbClient, taskId);
+    const latestEvent = await getLatestTaskEvent(ddbClient, taskId, jobId);
     const state = latestEvent ? EVENT_TO_STATE[latestEvent.eventType] : null;
     if (state !== 'in_review') {
       return error(409, { error: `Task is not in review (current state: ${state || 'unknown'})` });
@@ -53,7 +53,7 @@ export async function handler(event) {
     }));
 
     // Update Task Saved with completed status
-    const prevSaved = await getLatestTaskSaved(ddbClient, taskId);
+    const prevSaved = await getLatestTaskSaved(ddbClient, taskId, jobId);
     const prevProps = prevSaved?.properties || {};
 
     const taskSavedEvent = buildEvent('Task Saved', {

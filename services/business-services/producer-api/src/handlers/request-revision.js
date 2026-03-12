@@ -1,7 +1,7 @@
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
-import { success, error } from '../lib/response.js';
+import { success, error, parseBody } from '../lib/response.js';
 import { config } from '../lib/config.js';
 import { buildEvent } from '../lib/event-builder.js';
 import { EVENT_TO_STATE, getLatestTaskEvent, getLatestTaskSaved, getJobDag } from '../lib/job-queries.js';
@@ -19,7 +19,7 @@ export async function handler(event) {
     // Parse and validate body
     let body;
     try {
-      body = JSON.parse(event.body);
+      body = parseBody(event);
     } catch {
       return error(400, { error: 'Invalid JSON body' });
     }
@@ -42,14 +42,14 @@ export async function handler(event) {
     }
 
     // Validate task is in_review
-    const latestEvent = await getLatestTaskEvent(ddbClient, taskId);
+    const latestEvent = await getLatestTaskEvent(ddbClient, taskId, jobId);
     const state = latestEvent ? EVENT_TO_STATE[latestEvent.eventType] : null;
     if (state !== 'in_review') {
       return error(409, { error: `Task is not in review (current state: ${state || 'unknown'})` });
     }
 
     // Get current Task Saved for iteration + output
-    const prevSaved = await getLatestTaskSaved(ddbClient, taskId);
+    const prevSaved = await getLatestTaskSaved(ddbClient, taskId, jobId);
     const prevProps = prevSaved?.properties || {};
     const currentIteration = prevProps.iteration || 1;
     const nextIteration = currentIteration + 1;

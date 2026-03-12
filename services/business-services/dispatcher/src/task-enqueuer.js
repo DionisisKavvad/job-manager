@@ -17,7 +17,8 @@ export async function handler(event) {
   // Allow time for it to be persisted before querying.
   await delay(1500);
 
-  const taskSaved = await getLatestTaskSaved(ddbClient, taskId);
+  const jobId = props.jobId;
+  const taskSaved = await getLatestTaskSaved(ddbClient, taskId, jobId);
   if (!taskSaved) {
     console.error(`[ENQUEUER] No Task Saved found for ${taskId} — cannot build SQS message`);
     return;

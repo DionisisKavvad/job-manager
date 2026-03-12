@@ -9,7 +9,7 @@ export async function handler(event) {
   try {
     const { jobId, taskId } = event.pathParameters;
 
-    const events = await getAllTaskEvents(ddbClient, taskId);
+    const events = await getAllTaskEvents(ddbClient, taskId, jobId);
 
     if (events.length === 0) {
       return error(404, { error: 'No events found for task' });

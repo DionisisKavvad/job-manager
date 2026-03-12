@@ -28,7 +28,7 @@ export async function getAllJobEvents(ddbClient, jobId) {
   return result.Items || [];
 }
 
-export async function getLatestTaskSaved(ddbClient, taskId) {
+export async function getLatestTaskSaved(ddbClient, taskId, jobId) {
   const result = await ddbClient.send(new QueryCommand({
     TableName: TABLE_NAME,
     IndexName: 'GSI5-index',
@@ -38,25 +38,29 @@ export async function getLatestTaskSaved(ddbClient, taskId) {
       ':sk': `TENANT#${process.env.TENANT_ID || 'gbInnovations'}#TASK#${taskId}`,
     },
     ScanIndexForward: false,
-    Limit: 1,
+    Limit: 20,
   }));
-  return result.Items?.[0] || null;
+  const items = result.Items || [];
+  if (!jobId) return items[0] || null;
+  return items.find(item => item.properties?.jobId === jobId) || null;
 }
 
-export async function getLatestTaskEvent(ddbClient, taskId) {
+export async function getLatestTaskEvent(ddbClient, taskId, jobId) {
   const result = await ddbClient.send(new QueryCommand({
     TableName: TABLE_NAME,
     IndexName: 'GSI1-index',
     KeyConditionExpression: 'GSI1PK = :pk',
     ExpressionAttributeValues: { ':pk': `TASK#${taskId}` },
     ScanIndexForward: false,
-    Limit: 5,
+    Limit: 50,
   }));
-  const items = result.Items || [];
-  return items.find(item => item.eventType !== 'Task Saved') || null;
+  const items = (result.Items || [])
+    .filter(item => item.eventType !== 'Task Saved')
+    .filter(item => !jobId || item.properties?.jobId === jobId);
+  return items[0] || null;
 }
 
-export async function getAllTaskEvents(ddbClient, taskId) {
+export async function getAllTaskEvents(ddbClient, taskId, jobId) {
   const result = await ddbClient.send(new QueryCommand({
     TableName: TABLE_NAME,
     IndexName: 'GSI1-index',
@@ -64,7 +68,9 @@ export async function getAllTaskEvents(ddbClient, taskId) {
     ExpressionAttributeValues: { ':pk': `TASK#${taskId}` },
     ScanIndexForward: true,
   }));
-  return result.Items || [];
+  const items = result.Items || [];
+  if (!jobId) return items;
+  return items.filter(item => item.properties?.jobId === jobId);
 }
 
 export async function getJobFailureDetectedEvent(ddbClient, jobId) {
@@ -72,8 +78,8 @@ export async function getJobFailureDetectedEvent(ddbClient, jobId) {
   return allEvents.find(e => e.eventType === 'Job Failure Detected') || null;
 }
 
-export async function getTaskOutputEvent(ddbClient, taskId) {
-  const allEvents = await getAllTaskEvents(ddbClient, taskId);
+export async function getTaskOutputEvent(ddbClient, taskId, jobId) {
+  const allEvents = await getAllTaskEvents(ddbClient, taskId, jobId);
   const submittedForReview = allEvents.filter(e => e.eventType === 'Task Submitted For Review');
   const completed = allEvents.find(e => e.eventType === 'Task Completed');
 

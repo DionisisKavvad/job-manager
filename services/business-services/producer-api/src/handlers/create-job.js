@@ -4,7 +4,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { validateDag } from '../lib/dag-validator.js';
 import { buildEvent } from '../lib/event-builder.js';
-import { success, error } from '../lib/response.js';
+import { success, error, parseBody } from '../lib/response.js';
 import { config } from '../lib/config.js';
 
 const ebClient = new EventBridgeClient({});
@@ -12,7 +12,7 @@ const ddbClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
 export async function handler(event) {
   try {
-    const body = JSON.parse(event.body);
+    const body = parseBody(event);
 
     // 1. Validate DAG (includes description/tag validation)
     const validation = validateDag(body.tasks);

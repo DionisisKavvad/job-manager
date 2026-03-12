@@ -41,10 +41,10 @@ export async function handler(event) {
 
   const taskDag = jobSaved.properties.tasks;
 
-  // 2. Get current status of all tasks
+  // 2. Get current status of all tasks (scoped to this job)
   const taskStatuses = {};
   for (const task of taskDag) {
-    const latestEvent = await getLatestTaskEvent(ddbClient, task.taskId);
+    const latestEvent = await getLatestTaskEvent(ddbClient, task.taskId, jobId);
     taskStatuses[task.taskId] = latestEvent
       ? EVENT_TO_STATE[latestEvent.eventType]
       : null;
@@ -89,14 +89,14 @@ export async function handler(event) {
     // Gather outputs from completed dependencies
     const dependencyOutputs = {};
     for (const depId of task.dependsOn) {
-      const outputEvent = await getTaskOutputEvent(ddbClient, depId);
+      const outputEvent = await getTaskOutputEvent(ddbClient, depId, jobId);
       if (outputEvent?.properties?.output) {
         dependencyOutputs[depId] = outputEvent.properties.output;
       }
     }
 
     // Query previous Task Saved and merge with dependencyOutputs
-    const previousTaskSaved = await getLatestTaskSaved(ddbClient, task.taskId);
+    const previousTaskSaved = await getLatestTaskSaved(ddbClient, task.taskId, jobId);
     const previousProps = previousTaskSaved?.properties || {};
 
     const taskSavedEvent = buildEvent('Task Saved', {

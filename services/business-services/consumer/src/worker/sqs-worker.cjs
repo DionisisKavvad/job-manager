@@ -81,20 +81,22 @@ function getFilteredEnv() {
   return filtered;
 }
 
-async function getLatestTaskEvent(requestId) {
+async function getLatestTaskEvent(requestId, jobId) {
   const result = await ddbClient.send(new QueryCommand({
     TableName: TABLE_NAME,
     IndexName: 'GSI1-index',
     KeyConditionExpression: 'GSI1PK = :pk',
     ExpressionAttributeValues: { ':pk': `TASK#${requestId}` },
     ScanIndexForward: false,
-    Limit: 5,
+    Limit: 50,
   }));
-  const items = result.Items || [];
-  return items.find(item => item.eventType !== 'Task Saved') || null;
+  const items = (result.Items || [])
+    .filter(item => item.eventType !== 'Task Saved')
+    .filter(item => !jobId || item.properties?.jobId === jobId);
+  return items[0] || null;
 }
 
-async function getLatestTaskSaved(taskId) {
+async function getLatestTaskSaved(taskId, jobId) {
   const TENANT_ID = process.env.TENANT_ID || 'gbInnovations';
   const result = await ddbClient.send(new QueryCommand({
     TableName: TABLE_NAME,
@@ -105,13 +107,15 @@ async function getLatestTaskSaved(taskId) {
       ':sk': `TENANT#${TENANT_ID}#TASK#${taskId}`,
     },
     ScanIndexForward: false,
-    Limit: 1,
+    Limit: 20,
   }));
-  return result.Items?.[0] || null;
+  const items = result.Items || [];
+  if (!jobId) return items[0] || null;
+  return items.find(item => item.properties?.jobId === jobId) || null;
 }
 
-async function checkIdempotency(requestId) {
-  const latestEvent = await getLatestTaskEvent(requestId);
+async function checkIdempotency(requestId, jobId) {
+  const latestEvent = await getLatestTaskEvent(requestId, jobId);
   if (!latestEvent) return { proceed: true, reason: 'first-time' };
 
   const state = EVENT_TO_STATE[latestEvent.eventType];
@@ -179,7 +183,7 @@ async function processMessage(message) {
   }
 
   // Idempotency check
-  const idempotency = await checkIdempotency(requestId);
+  const idempotency = await checkIdempotency(requestId, jobId);
   if (!idempotency.proceed) {
     console.log(`[WORKER] Skipping ${requestId}: ${idempotency.reason} (state: ${idempotency.state})`);
     if (idempotency.reason === 'terminal') {
@@ -350,7 +354,7 @@ async function processMessage(message) {
       });
 
       // Emit Task Saved with accumulated snapshot
-      const prevSaved = await getLatestTaskSaved(requestId);
+      const prevSaved = await getLatestTaskSaved(requestId, jobId);
       const prevProps = prevSaved?.properties || {};
       await emitEvent('Task Saved', {
         entityId: requestId,
@@ -383,7 +387,7 @@ async function processMessage(message) {
       });
 
       // Emit Task Saved with accumulated snapshot
-      const prevSaved = await getLatestTaskSaved(requestId);
+      const prevSaved = await getLatestTaskSaved(requestId, jobId);
       const prevProps = prevSaved?.properties || {};
       await emitEvent('Task Saved', {
         entityId: requestId,
