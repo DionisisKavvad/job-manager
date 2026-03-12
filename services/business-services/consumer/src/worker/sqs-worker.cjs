@@ -326,10 +326,10 @@ async function processMessage(message) {
     let feedbackResult = null;
     try {
       const parsed = JSON.parse(result.stdout.trim().split('\n').pop());
-      output = parsed.output || {};
-      usage = parsed.usage || {};
-      durationMs = parsed.durationMs || durationMs;
-      feedbackResult = parsed.feedbackResult || null;
+      output = parsed.output ?? {};
+      usage = parsed.usage ?? {};
+      durationMs = parsed.durationMs ?? durationMs;
+      feedbackResult = parsed.feedbackResult ?? null;
     } catch {}
 
     // Check requiresReview from SQS message body

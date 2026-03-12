@@ -43,6 +43,7 @@ functions:
           path: /jobs
           method: post
           private: true
+          cors: true
     iamRoleStatements:
       - Effect: Allow
         Action: events:PutEvents
@@ -65,6 +66,7 @@ functions:
           path: /jobs/{jobId}/tasks
           method: post
           private: true
+          cors: true
     iamRoleStatements:
       - Effect: Allow
         Action:
@@ -87,6 +89,7 @@ functions:
           path: /jobs
           method: get
           private: true
+          cors: true
     iamRoleStatements:
       - Effect: Allow
         Action: dynamodb:Query
@@ -104,6 +107,7 @@ functions:
           path: /jobs/{jobId}
           method: get
           private: true
+          cors: true
     iamRoleStatements:
       - Effect: Allow
         Action: dynamodb:Query
@@ -121,6 +125,7 @@ functions:
           path: /jobs/{jobId}/tasks/{taskId}/events
           method: get
           private: true
+          cors: true
     iamRoleStatements:
       - Effect: Allow
         Action: dynamodb:Query
@@ -138,6 +143,7 @@ functions:
           path: /jobs/{jobId}/tasks/{taskId}/approve
           method: post
           private: true
+          cors: true
     iamRoleStatements:
       - Effect: Allow
         Action: dynamodb:Query
@@ -158,6 +164,7 @@ functions:
           path: /jobs/{jobId}/tasks/{taskId}/request-revision
           method: post
           private: true
+          cors: true
     iamRoleStatements:
       - Effect: Allow
         Action:

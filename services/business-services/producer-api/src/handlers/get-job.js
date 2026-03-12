@@ -74,6 +74,7 @@ export async function handler(event) {
         durationMs: savedProps.durationMs || null,
         usage: savedProps.usage || null,
         feedbackResult: savedProps.feedbackResult || null,
+        error: latestEvent?.eventType === 'Task Failed' ? latestEvent.properties?.error || null : null,
       };
     }));
 

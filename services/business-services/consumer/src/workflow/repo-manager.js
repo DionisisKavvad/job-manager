@@ -14,6 +14,11 @@ function extractRepoName(repoUrl) {
   return match[1];
 }
 
+function normalizeRepoUrl(repoUrl) {
+  if (repoUrl.startsWith('https://') || repoUrl.startsWith('git@')) return repoUrl;
+  return `https://github.com/${repoUrl}`;
+}
+
 function injectToken(repoUrl, token) {
   if (!token) return repoUrl;
   return repoUrl.replace('https://github.com/', `https://${token}@github.com/`);
@@ -88,8 +93,9 @@ async function ensureBareClone(repoUrl, repoName) {
  * Returns the worktree directory path.
  */
 export async function prepareRepo({ repo, taskId, branch }) {
-  const repoName = extractRepoName(repo);
-  const bareDir = await ensureBareClone(repo, repoName);
+  const repoUrl = normalizeRepoUrl(repo);
+  const repoName = extractRepoName(repoUrl);
+  const bareDir = await ensureBareClone(repoUrl, repoName);
 
   const worktreeDir = join(WORKTREES_BASE, taskId);
   const branchName = branch || `task/${taskId}`;
@@ -102,12 +108,17 @@ export async function prepareRepo({ repo, taskId, branch }) {
     await rm(worktreeDir, { recursive: true, force: true });
   }
 
-  await git(['worktree', 'add', worktreeDir, '-b', branchName, 'origin/main'], bareDir);
+  // Clean up stale branch from previous runs
+  await git(['branch', '-D', branchName], bareDir).catch(() => {});
+
+  // In a bare clone, HEAD points to the default branch (no origin/ prefix)
+  const defaultBranch = await git(['symbolic-ref', '--short', 'HEAD'], bareDir).catch(() => 'main');
+  await git(['worktree', 'add', worktreeDir, '-b', branchName, defaultBranch], bareDir);
 
   // Set up remote URL with token so the worktree can push
   const token = process.env.GITHUB_TOKEN;
   if (token) {
-    const authedUrl = injectToken(repo, token);
+    const authedUrl = injectToken(repoUrl, token);
     await git(['remote', 'set-url', 'origin', authedUrl], worktreeDir);
   }
 

@@ -104,7 +104,7 @@ export default function TaskDetailDrawer() {
 
   if (!task) {
     return (
-      <div className="w-[420px] flex-shrink-0 border-l border-gray-200 bg-white flex items-center justify-center">
+      <div className="w-[600px] flex-shrink-0 border-l border-gray-200 bg-white flex items-center justify-center">
         <p className="text-sm text-gray-400">Task not found</p>
       </div>
     );
@@ -114,7 +114,7 @@ export default function TaskDetailDrawer() {
   const tagClass = getTagColor(task.tag);
 
   return (
-    <div className="w-[420px] flex-shrink-0 border-l border-gray-200 bg-white flex flex-col overflow-hidden">
+    <div className="w-[600px] flex-shrink-0 border-l border-gray-200 bg-white flex flex-col overflow-hidden">
       {/* Header */}
       <div className="px-4 py-3 border-b border-gray-200 flex-shrink-0">
         <div className="flex items-start justify-between">

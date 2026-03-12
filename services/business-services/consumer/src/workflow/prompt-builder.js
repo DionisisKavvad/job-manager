@@ -33,5 +33,7 @@ export function buildPrompt({ taskDefinition, input, dependencyOutputs, iteratio
     sections.push(`# Validation\nAfter you finish, the following commands will be run:\n${commandLines}\nPlease ensure your changes pass these checks.`);
   }
 
+  sections.push(`# Output\nWhen you are done, you MUST end with a final text message summarizing what you did. Include a brief summary of the work completed and any relevant results. If the task asks for structured data, include it as a JSON code block in your final message.`);
+
   return sections.join('\n\n');
 }

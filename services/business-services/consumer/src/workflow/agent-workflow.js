@@ -41,11 +41,26 @@ export async function executeStep(step, outputDir, cwd) {
       });
 
       let finalResult = null;
+      let lastAssistantText = '';
 
       for await (const message of generator) {
+        // Capture assistant text from conversation messages
+        if (message.type === 'assistant') {
+          const content = message.message?.content || message.content;
+          if (Array.isArray(content)) {
+            const text = content.filter(b => b.type === 'text').map(b => b.text).join('\n');
+            if (text) lastAssistantText = text;
+          } else if (typeof content === 'string' && content) {
+            lastAssistantText = content;
+          }
+        }
+
         if (message.type === 'result') {
+          const sdkOutput = message.structured_output || message.result || message.output;
+          const effectiveOutput = sdkOutput || lastAssistantText || '';
+
           finalResult = {
-            output: message.structured_output || message.output,
+            output: effectiveOutput,
             usage: {
               inputTokens: message.usage?.input_tokens || 0,
               outputTokens: message.usage?.output_tokens || 0,
