@@ -15,6 +15,8 @@ module.exports = {
     merge_logs: true,
     env: {
       NODE_ENV: 'dev',
+      DEFAULT_TIMEOUT: '600000',
+      CLAUDE_TIMEOUT: '600000',
     },
     env_production: {
       NODE_ENV: 'production',

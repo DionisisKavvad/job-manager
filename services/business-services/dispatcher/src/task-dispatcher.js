@@ -31,15 +31,26 @@ const ebClient = new EventBridgeClient({});
 export async function handler(event) {
   const detail = event.detail;
   const jobId = detail.properties?.jobId;
+  const triggerEventType = detail.eventType;
+  const triggerEntityId = detail.entityId;
+
+  console.log(`[DISPATCHER] Triggered by: ${triggerEventType} for ${triggerEntityId}, jobId=${jobId}`);
 
   // Standalone task — no job orchestration needed
-  if (!jobId) return;
+  if (!jobId) {
+    console.log('[DISPATCHER] No jobId — skipping');
+    return;
+  }
 
   // 1. Get latest Job Saved (full task DAG)
   const jobSaved = await getLatestJobSaved(ddbClient, jobId);
-  if (!jobSaved) return;
+  if (!jobSaved) {
+    console.log(`[DISPATCHER] No Job Saved found for ${jobId}`);
+    return;
+  }
 
   const taskDag = jobSaved.properties.tasks;
+  console.log(`[DISPATCHER] Job has ${taskDag.length} tasks: ${taskDag.map(t => t.taskId).join(', ')}`);
 
   // 2. Get current status of all tasks (scoped to this job)
   const taskStatuses = {};
@@ -49,6 +60,8 @@ export async function handler(event) {
       ? EVENT_TO_STATE[latestEvent.eventType]
       : null;
   }
+
+  console.log(`[DISPATCHER] Task statuses:`, JSON.stringify(taskStatuses));
 
   // 3. Check for failure — emit detection event (idempotent, once per job)
   const failedTasks = taskDag.filter(t => taskStatuses[t.taskId] === 'failed');
@@ -81,8 +94,12 @@ export async function handler(event) {
   // 4. Find tasks ready to dispatch
   const readyTasks = taskDag.filter(task => {
     if (taskStatuses[task.taskId]) return false; // already started or done
-    return task.dependsOn.every(depId => taskStatuses[depId] === 'completed');
+    const depsReady = task.dependsOn.every(depId => taskStatuses[depId] === 'completed');
+    console.log(`[DISPATCHER] Task ${task.taskId}: status=${taskStatuses[task.taskId]}, dependsOn=${JSON.stringify(task.dependsOn)}, depsReady=${depsReady}`);
+    return depsReady;
   });
+
+  console.log(`[DISPATCHER] Ready tasks: ${readyTasks.map(t => t.taskId).join(', ') || 'none'}`);
 
   // 5. Emit Task Saved (with dependencyOutputs) + slim Task Pending for ready tasks
   for (const task of readyTasks) {
