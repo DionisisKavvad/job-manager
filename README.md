@@ -268,45 +268,66 @@ Task B receives:
 
 ## Examples
 
+All examples are `POST /jobs` request bodies. Each job contains a `tasks` array.
+
+### Simple task execution (the basics)
+
+The simplest use case: two tasks with a dependency. The first generates a fibonacci sequence, the second analyzes it. No repo, no external APIs — just Claude executing instructions.
+
+```json
+{
+  "tasks": [
+    {
+      "taskId": "generate-data",
+      "name": "Generate fibonacci sequence",
+      "tag": "developer",
+      "description": "Write a script that generates the first 50 fibonacci numbers. Return the result as a JSON array.",
+      "allowedTools": ["Bash", "Write"],
+      "maxTurns": 10
+    },
+    {
+      "taskId": "analyze-data",
+      "name": "Analyze the sequence",
+      "tag": "data-analyst",
+      "description": "Analyze the fibonacci sequence from the previous task. Calculate the golden ratio convergence, identify which numbers are prime, and return a structured JSON summary.",
+      "dependsOn": ["generate-data"],
+      "maxTurns": 10
+    }
+  ]
+}
+```
+
+**What happens:**
+1. `generate-data` runs immediately (root task, no dependencies)
+2. Claude writes and runs a script, outputs the fibonacci array
+3. `analyze-data` receives that output as context and runs its analysis
+4. Job completes when both tasks finish
+
 ### Code task (with repo + feedback + review)
 
 ```json
 {
-  "taskId": "implement-feature",
-  "name": "Add pagination to /users endpoint",
-  "tag": "backend-developer",
-  "description": "Add cursor-based pagination to GET /users. Follow existing patterns in src/routes/.",
-  "repo": "myorg/api",
-  "model": "claude-opus-4-6",
-  "maxTurns": 30,
-  "requiresReview": true,
-  "feedbackCommands": {
-    "lint": "npm run lint",
-    "typecheck": "npx tsc --noEmit",
-    "test": "npm test"
-  }
+  "tasks": [
+    {
+      "taskId": "implement-feature",
+      "name": "Add pagination to /users endpoint",
+      "tag": "backend-developer",
+      "description": "Add cursor-based pagination to GET /users. Follow existing patterns in src/routes/.",
+      "repo": "myorg/api",
+      "model": "claude-opus-4-6",
+      "maxTurns": 30,
+      "requiresReview": true,
+      "feedbackCommands": {
+        "lint": "npm run lint",
+        "typecheck": "npx tsc --noEmit",
+        "test": "npm test"
+      }
+    }
+  ]
 }
 ```
 
-### Data analysis task (no repo)
-
-```json
-{
-  "taskId": "analyze-metrics",
-  "name": "Analyze Q1 sales data",
-  "tag": "data-analyst",
-  "description": "Calculate average order value, top 10 products by revenue, and month-over-month growth. Return as structured JSON.",
-  "model": "claude-sonnet-4-6",
-  "input": {
-    "dataSource": "https://api.example.com/sales?quarter=Q1",
-    "format": "json"
-  },
-  "allowedTools": ["Bash", "Read", "Write"],
-  "maxTurns": 15
-}
-```
-
-### Multi-task pipeline
+### Multi-task pipeline (with output chaining)
 
 ```json
 {
