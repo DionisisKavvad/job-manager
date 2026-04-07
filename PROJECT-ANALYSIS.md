@@ -4,34 +4,33 @@
 
 Ένα **event-sourced, serverless σύστημα orchestration** που εκτελεί DAG-based workflows χρησιμοποιώντας **Claude Agent SDK** ως compute engine. Built on AWS (Lambda, SQS, EventBridge, DynamoDB, S3) με React frontend dashboard.
 
-**Codebase:** ~2,966 γραμμές κώδικα σε 7 services (monorepo με npm workspaces)
+**Codebase:** ~26,800 γραμμές κώδικα σε 7 packages (monorepo με npm workspaces)
 
 ---
 
 ## Τι Είναι και Για Τι Χρησιμοποιείται
 
-Το Job Manager είναι ουσιαστικά ένα **AI-powered code automation platform**. Κάθε "job" είναι ένα σύνολο αλληλεξαρτώμενων tasks που εκτελούνται **πάνω σε πραγματικά GitHub repositories** από τον Claude Agent — δηλαδή ένα LLM που μπορεί να διαβάζει, γράφει, και τρέχει κώδικα αυτόνομα.
+Το Job Manager είναι ένα **general-purpose AI task execution engine**. Ουσιαστικά είναι ένα machine που **ακούει για tasks και τα εκτελεί** — κάθε task τρέχει από Claude Agent αυτόνομα, με configurable tools, inputs, και outputs.
 
 ### Η Βασική Ιδέα
 
-Αντί να γράψεις κώδικα χειροκίνητα, περιγράφεις **τι θέλεις** σε φυσική γλώσσα, δίνεις το repo, και ο Claude Agent:
-1. Κάνει clone το repo σε isolated worktree
-2. Διαβάζει τον υπάρχοντα κώδικα (Read, Glob, Grep)
-3. Γράφει/τροποποιεί αρχεία (Write, Edit)
-4. Τρέχει commands (Bash) — tests, builds, linting
-5. Αν κάτι αποτύχει, το feedback loop τον ξανατρέχει με context του error
-6. Παράγει output (structured JSON ή text) που περνάει στα εξαρτημένα tasks
+Περιγράφεις **τι θέλεις** σε φυσική γλώσσα, ορίζεις dependencies μεταξύ tasks, και το σύστημα:
+1. Orchestrate τα tasks ως DAG (dependency graph)
+2. Εκτελεί κάθε task μέσω Claude Agent με τα κατάλληλα tools
+3. Περνάει outputs από ένα task στα εξαρτημένα tasks
+4. Αν κάτι αποτύχει, το feedback loop ξανατρέχει τον agent με context του error
+5. Παράγει artifacts (structured JSON, text, files) που αποθηκεύονται στο S3
 
-### Γιατί το `repo` field
+Τα tasks μπορούν να κάνουν **οτιδήποτε** — code automation, data analysis, scraping, report generation, κτλ. Δεν είναι limited σε code/repos.
 
-Κάθε task μπορεί να δουλεύει σε **διαφορετικό repository**. Αυτό σημαίνει ότι ένα job μπορεί να span across πολλαπλά repos. Πχ:
-- Task A: Αλλάζει το API στο `backend-repo`
-- Task B (depends on A): Ενημερώνει τον client στο `frontend-repo` βάσει των αλλαγών
-- Task C (depends on B): Τρέχει E2E tests στο `e2e-repo`
+### Το `repo` field (optional)
 
-Κάθε task δημιουργεί **δικό του git branch** (`task/{taskId}`) μέσα σε ένα **isolated worktree** στο `/tmp/job-manager-tasks/{taskId}`, οπότε δεν υπάρχει κίνδυνος conflict μεταξύ concurrent tasks.
+Για tasks που χρειάζονται git context, το `repo` field δίνει πρόσβαση σε repository:
+- Κάθε task μπορεί να δουλεύει σε **διαφορετικό repository** — ένα job μπορεί να span across πολλαπλά repos
+- Κάθε task δημιουργεί **δικό του git branch** (`task/{taskId}`) σε **isolated worktree** στο `/tmp/job-manager-tasks/{taskId}`
+- Ο agent κάνει clone, διαβάζει κώδικα, γράφει αρχεία, τρέχει commands
 
-Αν ένα task **δεν** χρειάζεται repo (πχ data analysis, scraping), το `repo` field παραλείπεται και ο agent τρέχει χωρίς git context.
+Αν ένα task **δεν** χρειάζεται repo, το `repo` field απλά παραλείπεται και ο agent τρέχει χωρίς git context.
 
 ---
 
@@ -388,28 +387,34 @@ After you finish, the following commands will be run:
 ```
 ┌─────────────┐     ┌─────────────────┐     ┌────────────────┐
 │  React UI   │     │  Producer API   │     │  Health Check  │
-│  (Vite)     │     │  (API Gateway)  │     │  (Scheduled)   │
+│  (Vite)     │◄───►│  (API Gateway)  │     │  (Scheduled)   │
 └─────────────┘     └───────┬─────────┘     └────────┬───────┘
-                            │                         │
+                            │  7 endpoints            │
                     ┌───────▼─────────────────────────▼──────┐
                     │          EventBridge Bus               │
-                    └──┬──────────┬──────────────┬───────────┘
-                       │          │              │
-              ┌────────▼──┐  ┌───▼────────┐  ┌──▼──────────┐
-              │  Event    │  │ Dispatcher │  │  DLQ Alert  │
-              │  Service  │  │ (DAG orch) │  │  Service    │
-              └────┬──────┘  └───┬────────┘  └─────────────┘
-                   │             │
-              ┌────▼──────┐  ┌──▼──────────┐
-              │ DynamoDB  │  │  SQS Queue  │
-              │ (events)  │  └──┬──────────┘
-              └───────────┘     │
-                           ┌────▼──────────┐
-                           │   Consumer    │
-                           │ (SQS Worker)  │
-                           │ + Claude SDK  │
-                           └───────────────┘
+                    └──┬──────────┬───────────┬──────────────┘
+                       │          │           │
+              ┌────────▼──┐  ┌───▼────────┐  ┌──▼───────────────┐
+              │  Event    │  │ Dispatcher │  │  DLQ Alerts      │
+              │  Service  │  │  Package   │  │  (task + EB DLQ) │
+              └────┬──────┘  │  ├ task-dispatcher    │
+                   │         │  ├ task-enqueuer       │
+              ┌────▼──────┐  │  └ review-notifier    │
+              │ DynamoDB  │  └───┬────────┘  └──────────────────┘
+              │ (events)  │      │
+              └───────────┘  ┌───▼──────────┐
+                             │  SQS Queue   │
+                             └───┬──────────┘
+                            ┌────▼──────────────┐
+                            │   Consumer (PM2)  │
+                            │   3 cluster procs │
+                            │   + child process │
+                            │   per task (Claude│
+                            │   Agent SDK)      │
+                            └───────────────────┘
 ```
+
+> **Σημείωση:** Ο Consumer δεν είναι Lambda — τρέχει ως **long-running PM2 process** σε EC2 (cluster mode, 3 instances, daily restart στις 02:00). Κάθε task εκτελείται σε spawned child process.
 
 ---
 
@@ -420,18 +425,24 @@ After you finish, the following commands will be run:
 - **POST /jobs** — Δημιουργία job με πολλαπλά tasks και dependency graph
 - **POST /jobs/{jobId}/tasks** — Προσθήκη tasks σε υπάρχον job
 - **GET /jobs**, **GET /jobs/{jobId}** — Ανάγνωση jobs/tasks/status
+- **GET /jobs/{jobId}/tasks/{taskId}/events** — Event timeline για task
+- **POST /jobs/{jobId}/tasks/{taskId}/approve** — Approve task in review
+- **POST /jobs/{jobId}/tasks/{taskId}/request-revision** — Request revision with feedback
 - Validation μέσω **Kahn's algorithm** (cycle detection, max 50 tasks)
 - Αυτόματο dispatch root tasks (χωρίς dependencies) αμέσως μετά τη δημιουργία
 - Όταν ένα task ολοκληρώνεται, ο Dispatcher ελέγχει ποια dependent tasks είναι πλέον ready και τα ενεργοποιεί — **dependency output passing** (το output ενός task γίνεται input στα εξαρτημένα)
 
 ### 2. Claude Agent Task Execution
 
-- Κάθε task τρέχει σε **child process** με Claude Agent SDK (Claude Opus 4.5)
+- Κάθε task τρέχει σε **spawned child process** (`node task-workflow.js`) από τον SQS worker
+- **Two-process model:** ο worker (PM2) κάνει polling + lifecycle management, ο child τρέχει Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`)
 - Configurable **tools** (default: Read, Edit, Write, Bash, Glob, Grep)
 - Configurable **maxTurns** (default: 20, max: 200)
 - Prompt building: role, task description, input data, dependency outputs, previous output, reviewer feedback, validation commands
-- Timeout protection (default 120s, max 15min)
-- Streaming output με retry logic
+- Timeout protection (default 600s / 10min, max 15min)
+- Retry logic με exponential backoff + jitter (`withRetry`, max 3 attempts)
+- **SdkHooksManager** — intercepts tool calls/results, records per-tool durations, builds `session_trace.json`
+- **WorkflowLogger** — accumulates structured log entries, flushes to `logs/summary.log`
 
 ### 3. Git Worktree Isolation
 
@@ -453,27 +464,41 @@ After you finish, the following commands will be run:
 
 - Tasks μπορούν να ζητούν **human review** (`requiresReview: true`)
 - Μετά την ολοκλήρωση → `Task Submitted For Review` αντί `Task Completed`
-- Reviewer μπορεί να κάνει approve ή request revision
-- Revision: re-enqueue με iteration+1 + reviewer feedback (max 5 iterations)
+- **review-notifier Lambda** — triggers on `Task Submitted For Review`, sends Slack webhook (conditional on `SLACK_WEBHOOK_URL`)
+- Reviewer μπορεί να κάνει approve ή request revision μέσω API endpoints
+- Revision: re-enqueue με iteration+1 + reviewer feedback (max 5 iterations, max 5000 chars feedback)
+- **Σημείωση:** `request-revision` γράφει το updated `Task Saved` **direct στο DynamoDB** (bypass EventBridge) για consistency — αποφεύγει race condition με τον task-enqueuer
 
 ### 6. Health Monitoring
 
 - **Scheduled health checks** κάθε 5 λεπτά (prod)
+- **health-check** Lambda (scheduled) + **health-check-single** Lambda (manual per-task check)
 - Ανίχνευση stuck/overtime tasks:
-  - Healthy: < 2 min
-  - Warning: 2–10 min χωρίς heartbeat
-  - Overtime: > 4 ώρες
-  - Critical: > 12 ώρες ή > 30 min χωρίς heartbeat
+  - Overtime: elapsed > **1 hour**
+  - Healthy: last heartbeat < **5 min** ago
+  - Warning: last heartbeat **5–10 min** ago
+  - Critical: last heartbeat > **10 min** ago
 - **Slack alerts** για critical tasks
-- Single-task check API
+- Lookback window: 24 hours
 
 ### 7. Error Handling & Resilience
 
 - **Retryable errors** → message μένει στο SQS (max 3 retries)
 - **Terminal errors** → `Task Failed`, message deleted
-- **Dead Letter Queue** → dlq-processor εκπέμπει terminal failure
+- **Two DLQ mechanisms:**
+  - **Task DLQ** → `dlq-processor` εκπέμπει terminal failure
+  - **EventBridge Target DLQ** → `eventbridge-dlq-alert` sends Slack alert for failed event delivery
 - **Heartbeat system** → visibility extension κάθε 20s
 - **Idempotency checks** → αποφυγή duplicate processing
+
+### 7.5. Security
+
+- **API Key auth** μέσω API Gateway (`x-api-key` header, usage plan with throttling)
+- **Input sanitization** (`input-sanitizer.js`) — strips `{{template injection}}`, `<script>`, `javascript:`, `on*=` event handlers από prompt inputs
+- **Error sanitization** (`error-sanitizer.js`) — strips AWS keys, Bearer tokens, passwords, base64 strings από error messages πριν γίνουν persist σε events
+- **Child process env isolation** — 30-key allowlist (`ENV_ALLOWLIST`) prevents secret propagation to Claude agent
+- **requestId format validation** — `/^[a-zA-Z0-9-_]{1,256}$/` gate at worker entry
+- **Review feedback length cap** — max 5000 characters
 
 ### 8. Event Sourcing
 
@@ -488,7 +513,11 @@ After you finish, the following commands will be run:
 - **Kanban board** (Pending → Processing → In Review → Completed/Failed)
 - Job list με summary cards
 - Task cards με tag, dependencies, iteration, review status
-- **Currently mock data** — δεν είναι ακόμα connected στο API
+- **DAG visualization** — dependency graph per job
+- **Task detail drawer** — events timeline, feedback tab, output preview
+- **API integration** — `apiFetch` με `x-api-key` header, polling (jobs: 10s, detail: 5s)
+- **Review actions** — approve/request-revision buttons wired to API
+- Falls back to **mock data** αν δεν είναι set το `VITE_API_URL`
 
 ---
 
@@ -569,8 +598,8 @@ Message exceeds retries → DLQ → dlq-processor → Task Failed
 
 | Event | Emitted By | Trigger |
 |-------|-----------|---------|
-| `Job Saved` | Producer API | Job created or tasks added |
-| `Task Saved` | Producer API, Dispatcher | Task created or outputs ready |
+| `Job Saved` | Producer API | Job created or tasks added (direct DynamoDB write) |
+| `Task Saved` | Producer API, Dispatcher, Review API | Task created, outputs ready, or revision requested |
 | `Task Pending` | Producer API, Dispatcher | Task ready to execute |
 | `Task Processing Started` | Worker | Child process spawned |
 | `Task Processing Failed` | Worker | Retryable error |
@@ -578,12 +607,15 @@ Message exceeds retries → DLQ → dlq-processor → Task Failed
 | `Task Submitted For Review` | Worker | Success, review required |
 | `Task Revision Requested` | Review API | Reviewer requests changes |
 | `Task Approved` | Review API | Reviewer approves |
+| `Task Updated` | Worker | Task state update |
 | `Task Failed` | Worker, DLQ Processor | Terminal error |
-| `Task Timeout` | Worker | Timeout exceeded |
+| `Task Timeout` | Worker | Timeout exceeded (maps to `failed` internally) |
 | `Task Heartbeat` | Worker | Visibility extension |
 | `Job Completed` | Dispatcher | All tasks completed |
 | `Job Failure Detected` | Dispatcher | Task failed (non-blocking) |
 | `Task Health Check` | Health Check Lambda | Scheduled check |
+
+> **Σημείωση:** `Job Saved` γράφεται **direct στο DynamoDB** (bypass EventBridge) στο `create-job.js`. `Task Saved` στο revision path γράφεται επίσης direct.
 
 ---
 
@@ -615,15 +647,16 @@ SK = "TIMESTAMP#{timestamp}#EVENT#{eventId}"
 
 | Service | Usage |
 |---------|-------|
-| **Lambda** | All handlers (producer, dispatcher, health-check, event) |
-| **SQS** | Task queue + Dead Letter Queue |
+| **Lambda** | Producer API (7 handlers), Dispatcher (3: task-dispatcher, task-enqueuer, review-notifier), Event (3: save-event, dlq-processor, eb-dlq-alert), Health Check (2: scheduled + single) |
+| **EC2 + PM2** | Consumer — long-running SQS polling process (3 cluster instances) |
+| **SQS** | Task queue + Task DLQ + EventBridge Target DLQ |
 | **EventBridge** | Async event routing between services |
 | **DynamoDB** | Event storage (single table, event-sourced) |
 | **S3** | Artifact storage (logs, traces, task results) |
-| **API Gateway** | HTTP endpoints with API key auth + throttling |
+| **API Gateway** | 7 HTTP endpoints with API key auth + throttling |
 | **CloudWatch Events** | Scheduled health checks |
 
-**Deployment:** Serverless Framework (serverless.yml per service)
+**Deployment:** Serverless Framework (serverless.yml) για Lambda services. Consumer deploy via PM2 (`ecosystem.config.cjs`) + `deploy.sh`.
 
 ---
 
@@ -641,6 +674,7 @@ SK = "TIMESTAMP#{timestamp}#EVENT#{eventId}"
   "input": { "key": "value" },
   "allowedTools": ["Read", "Edit", "Write", "Bash", "Glob", "Grep"],
   "maxTurns": 20,
+  "model": "claude-opus-4-6",
   "feedbackCommands": {
     "lint": "npm run lint",
     "typecheck": "npx tsc --noEmit",
@@ -657,15 +691,24 @@ SK = "TIMESTAMP#{timestamp}#EVENT#{eventId}"
 |----------|---------|-------------|
 | `SQS_QUEUE_URL` | — | SQS queue to poll |
 | `MAX_CONCURRENT_CLAUDE` | 3 | Max concurrent child processes |
-| `CLAUDE_MODEL` | claude-opus-4-5 | Claude model to use |
-| `CLAUDE_TIMEOUT` | 200s | Task execution timeout |
-| `DEFAULT_TIMEOUT` | 120000ms | Agent timeout |
+| `MAX_MESSAGES` | 1 | Max SQS messages per poll |
+| `WAIT_TIME_SECONDS` | 20 | SQS long-poll wait (seconds) |
+| `CLAUDE_MODEL` | claude-sonnet-4-6 | Default Claude model (overridden per-task via `model` field) |
+| `CLAUDE_TIMEOUT` | 600000 (ms) | Worker-level task timeout (kills child) |
+| `DEFAULT_TIMEOUT` | 600000 (ms) | Agent SDK timeout |
 | `MAX_MESSAGE_RETRIES` | 3 | Max SQS retries |
 | `MAX_TASK_ITERATIONS` | 5 | Max revision iterations |
-| `VISIBILITY_EXTENSION_INTERVAL` | 20s | Heartbeat interval |
+| `VISIBILITY_EXTENSION_INTERVAL` | 20000 (ms) | Heartbeat interval |
+| `VISIBILITY_EXTENSION_AMOUNT` | 30 (s) | SQS visibility extension |
 | `GITHUB_TOKEN` | — | For private repo access |
+| `CLAUDE_CODE_OAUTH_TOKEN` | — | OAuth token auth for Claude SDK (alternative to API key) |
 | `WORKTREES_BASE` | /tmp/job-manager-tasks | Git worktree base path |
 | `S3_BUCKET` | — | Artifact storage |
+| `DELETE_FILES_AFTER_UPLOAD` | — | Clean up local files after S3 upload |
+| `DYNAMODB_EVENTS_TABLE_NAME` | — | DynamoDB events table name |
+| `EVENTBRIDGE_BUS_NAME` | — | EventBridge bus name |
+| `TENANT_ID` | — | Multi-tenant ID |
+| `APP_NAME` | — | Application name for events |
 
 ---
 
@@ -673,38 +716,43 @@ SK = "TIMESTAMP#{timestamp}#EVENT#{eventId}"
 
 | Area | Status |
 |------|--------|
-| Infrastructure (SQS, DynamoDB, EventBridge, S3) | Ready to deploy |
-| Producer API (CRUD endpoints) | Ready |
-| Dispatcher (DAG orchestration) | Ready |
-| Consumer (Claude execution + feedback loop) | Ready |
-| Event persistence | Ready |
-| Health checks + Slack alerts | Ready |
-| Git worktree isolation | Ready |
-| Feedback loop (lint/typecheck/test) | Ready |
-| Review notification routing | **WIP** |
-| Frontend ↔ API integration | **Not connected** (mock data) |
+| Infrastructure (SQS, DynamoDB, EventBridge, S3) | **Deployed** |
+| Producer API (7 endpoints) | **Deployed** |
+| Dispatcher (task-dispatcher + task-enqueuer + review-notifier) | **Deployed** |
+| Consumer (PM2 + Claude Agent SDK) | **Deployed** |
+| Event persistence | **Deployed** |
+| Health checks + Slack alerts | **Deployed** |
+| Git worktree isolation | **Ready** |
+| Feedback loop (lint/typecheck/test) | **Ready** |
+| Review notification routing (Slack) | **Deployed** (conditional on SLACK_WEBHOOK_URL) |
+| Frontend ↔ API integration | **Connected** (falls back to mock data when VITE_API_URL not set) |
+| Input/error sanitization | **Ready** |
 | Real-time monitoring dashboard | **Missing** |
-| Deployment/CI pipeline | **Not defined** |
+| Deployment/CI pipeline | **Not defined** (manual deploy via deploy.sh + serverless) |
 
 ---
 
 ## Task Lifecycle State Machine
 
 ```
+waiting (initial — no events yet)
+  ↓
 pending
   ↓
 processing (heartbeats every 20s)
   ├─ → processing-failed (retryable) → pending (retry, max 3)
   ├─ → completed (no review) → [deps notified]
   ├─ → in_review (review required)
-  │     ├─ → approved → [deps notified]
+  │     ├─ → approved (maps to completed internally) → [deps notified]
   │     └─ → revision_requested → pending (iteration++, max 5)
   ├─ → failed (terminal)
-  └─ → timeout
+  └─ → timeout (maps to failed internally)
 
-Terminal states: completed, approved, failed, timeout
+Terminal states: completed, failed
 ```
+
+> **Σημείωση:** Ο Dispatcher αντιδρά σε `Task Completed`, `Task Approved`, και `Task Failed`. Τόσο το `approved` όσο και το `timeout` γίνονται map σε `completed` και `failed` αντίστοιχα στο `EVENT_TO_STATE` mapping.
 
 ---
 
-*Last updated: 2026-02-23 (enriched with use cases & examples)*
+*Last updated: 2026-04-07 (verified against codebase — corrected consumer runtime, timeouts, endpoints, health thresholds, event types, security layers, state machine)*

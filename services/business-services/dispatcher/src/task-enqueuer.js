@@ -44,6 +44,7 @@ export async function handler(event) {
       iteration: taskProps.iteration || 1,
       reviewFeedback: taskProps.reviewFeedback || null,
       previousOutput: taskProps.previousOutput || null,
+      model: taskProps.model || null,
     }),
     MessageAttributes: {
       requestId: { DataType: 'String', StringValue: taskId },

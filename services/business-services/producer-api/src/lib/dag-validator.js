@@ -1,5 +1,13 @@
 const TASK_ID_PATTERN = /^[a-zA-Z0-9-_]{1,128}$/;
 
+export const ALLOWED_MODELS = new Set([
+  'claude-sonnet-4-6',
+  'claude-opus-4-6',
+  'claude-sonnet-4-5',
+  'claude-opus-4-5',
+  'claude-haiku-4-5',
+]);
+
 export function validateDag(tasks, options = {}) {
   const errors = [];
   const existingIds = options.existingIds || new Set();
@@ -61,6 +69,15 @@ export function validateDag(tasks, options = {}) {
             errors.push(`Task ${task.taskId}: feedbackCommands.${key} must be a non-empty string`);
           }
         }
+      }
+    }
+
+    // Optional: model — must be a known Claude model string
+    if (task.model !== undefined && task.model !== null) {
+      if (typeof task.model !== 'string' || !ALLOWED_MODELS.has(task.model)) {
+        errors.push(
+          `Task ${task.taskId}: model "${task.model}" is not allowed (use: ${[...ALLOWED_MODELS].join(', ')})`
+        );
       }
     }
   }

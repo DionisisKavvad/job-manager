@@ -63,6 +63,7 @@ export async function handler(event) {
           allowedTools: task.allowedTools || null,
           maxTurns: task.maxTurns || null,
           feedbackCommands: task.feedbackCommands || null,
+          model: task.model || null,
           status: 'pending',
         },
       });

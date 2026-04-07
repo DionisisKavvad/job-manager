@@ -2,8 +2,8 @@ import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
 import { withRetry } from '../utils/retry.js';
 import { SdkHooksManager } from './sdk-hooks-manager.js';
 
-const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-opus-4-5';
-const DEFAULT_TIMEOUT = parseInt(process.env.DEFAULT_TIMEOUT || '120000', 10);
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
+const DEFAULT_TIMEOUT = parseInt(process.env.DEFAULT_TIMEOUT || '600000', 10);
 const MIN_TIMEOUT = 1000;
 const MAX_TIMEOUT = 15 * 60 * 1000;
 
@@ -24,7 +24,7 @@ export async function executeStep(step, outputDir, cwd) {
       const generator = sdkQuery({
         prompt: step.constructedPrompt,
         options: {
-          model: CLAUDE_MODEL,
+          model: step.model || CLAUDE_MODEL,
           maxTurns: step.maxTurns || 10,
           permissionMode: 'bypassPermissions',
           cwd: cwd || process.cwd(),

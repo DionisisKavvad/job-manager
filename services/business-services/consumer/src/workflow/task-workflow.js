@@ -74,7 +74,8 @@ async function main() {
       constructedPrompt: prompt,
       maxTurns: inputData.maxTurns || 20,
       tools: inputData.allowedTools || DEFAULT_TOOLS,
-      timeout: parseInt(process.env.DEFAULT_TIMEOUT || '120000', 10),
+      timeout: parseInt(process.env.DEFAULT_TIMEOUT || '600000', 10),
+      model: inputData.model || null,
     }, outputDir, repoDir);
 
     logger.info(`Task completed in ${result.durationMs}ms`);
@@ -91,7 +92,8 @@ async function main() {
           constructedPrompt: prompt,
           maxTurns: inputData.maxTurns || 20,
           tools: inputData.allowedTools || DEFAULT_TOOLS,
-          timeout: parseInt(process.env.DEFAULT_TIMEOUT || '120000', 10),
+          timeout: parseInt(process.env.DEFAULT_TIMEOUT || '600000', 10),
+          model: inputData.model || null,
         },
         outputDir,
         logger,
